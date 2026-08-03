@@ -69,7 +69,7 @@ jobs:
     needs: verify
     permissions:
       contents: read
-      issues: write
+      issues: write # a repository's label set is owned by the issues API, and sync rewrites it
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
