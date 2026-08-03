@@ -53,6 +53,13 @@ came out below 1.000x, so a coefficient that drifts generous fails loudly
 instead of quietly costing every caller a few percent. Run it before and after
 anything that touches `src/price/`.
 
+Give it a real corpus. Each row is five samples of a min-of-five and is only
+called a loss when its whole interval sits below 1.000x, and below 8 MiB the
+survey declines to judge at all - a cache-resident corpus lets the engine's own
+accelerator run at tens of gigabytes a second, which no per-byte calibration
+describes. `SHENG_CORPUS=/path/to/a/big/tree` is how you get a verdict; against
+this repository alone you will correctly get a refusal.
+
 ## The Constraints A Change Is Held To
 
 Soundness is not negotiable and is not a test-suite property. A partition that

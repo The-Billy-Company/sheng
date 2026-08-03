@@ -35,16 +35,14 @@ not pay - which is the common outcome and the intended one.
 
 ## Installation
 
-Sheng is not yet on crates.io, so depend on it by git until a tag ships:
-
-```toml
-[dependencies]
-sheng = { git = "https://github.com/The-Billy-Company/sheng" }
+```bash
+cargo add sheng
 ```
 
 It needs Rust 1.95 or newer on edition 2024, and it pulls exactly two crates:
-`regex-automata` for the automaton and `memchr` for the narrow byte searches. It is
-Apache-2.0, standalone with its own lockfile and toolchain.
+`regex-automata` for the automaton and `memchr` for the narrow byte searches. Both are
+already in the graph of anyone using the `regex` crate, so in practice sheng adds nothing
+you were not already compiling. It is Apache-2.0.
 
 ## Usage
 
@@ -183,6 +181,14 @@ machine beside it is an anecdote.
 above 1.000x, so a coefficient that drifts generous fails loudly instead of quietly
 costing every caller a few percent. `bench` is the opposite - pure report - and it
 splits the build into four stages so a regression lands on a named one.
+
+Because it is a gate it also refuses. Each row is timed as five samples of a
+min-of-five and carries an interval, and only a row whose whole interval sits below
+1.000x counts as a loss; one that straddles is reported undecided and asserts nothing.
+Below 8 MiB of corpus it declines to judge at all, because a cache-resident corpus lets
+the engine's own accelerator run at tens of gigabytes a second and no per-byte
+calibration describes that machine. Aim `$SHENG_CORPUS` at real volume before reading a
+verdict into any row.
 
 ## The Design
 
