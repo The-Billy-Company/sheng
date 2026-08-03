@@ -67,8 +67,13 @@ jobs:
       # The one irreversible step in this whole workflow, so it carries its own gate
       # rather than trusting the job to have been skipped correctly: no repository
       # secret, no publish, regardless of what triggered this run.
+      #
+      # The gate reads `env`, not `secrets`, because Actions rejects the `secrets`
+      # context inside any `if:` at parse time — a workflow spelling it that way does
+      # not fail closed, it fails to load, and every job in it silently never runs.
+      # Aliasing the secret into step `env` is the documented way to condition on one.
       - name: cargo publish
-        if: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
+        if: env.CARGO_REGISTRY_TOKEN != ''
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish --locked
