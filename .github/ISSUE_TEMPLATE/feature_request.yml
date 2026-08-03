@@ -1,0 +1,58 @@
+name: Feature request
+description: Propose a new capability, API, or supported pattern shape.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Sheng's public surface is deliberately narrow - `Sieve`, `Policy`, and a
+        handful of diagnostic types. That is a design position rather than an
+        oversight, so the most useful proposal is one that says why the existing
+        surface cannot express what you need.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: >-
+        What can't you do today? A concrete pattern and haystack beats an
+        abstract description.
+    validations:
+      required: true
+
+  - type: textarea
+    id: shape
+    attributes:
+      label: Proposed shape
+      description: >-
+        Sketch the API you would want, or the observable behavior change. A
+        proposal that grows the public surface should say what the current
+        surface cannot reach.
+      render: rust
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: >-
+        Workarounds you have already tried, or why composing the existing pieces
+        - `Projection`, `Skip`, `Quotient` - does not cover it.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part would this touch?
+      options:
+        - the sieve itself (construction, refutation, the public API)
+        - pricing (which patterns can be sieved, and how they are costed)
+        - an architecture lane (NEON, SSSE3, or the scalar fallback)
+        - the fuzz or differential harnesses
+        - documentation
+        - not sure
+    validations:
+      required: true

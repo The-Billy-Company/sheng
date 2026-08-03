@@ -1,0 +1,107 @@
+name: Bug report
+description: Sheng refuted, refused, or crashed on input it should not have.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        A sieve that refutes a haystack the pattern actually matches is a
+        soundness bug, not a performance one - it makes the engine behind it
+        skip real work. Say so if that is what you are looking at, and pick
+        `soundness` below.
+
+
+        If you think it can be triggered by untrusted input, do not open a
+        public issue: [report it
+        privately](https://github.com/The-Billy-Company/sheng/security/advisories/new).
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: A clear description of the incorrect behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: >-
+        The pattern, the `Sieve` construction (gated or ungated, and which
+        `Policy`), and the haystack that triggers it. Smaller is better - a
+        `cargo fuzz tmin` minimization is ideal if you have one.
+      render: rust
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected against actual
+      description: >-
+        What the sieve should have answered, and what it answered instead.
+      placeholder: |
+        Expected: the sieve admits this haystack, since /foo\d+/ matches at 12.
+        Actual:   it refutes, so the engine never walks the document.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of wrong is it?
+      options:
+        - a false refutation (it skipped a haystack that does match)
+        - a panic or a crash while building the sieve
+        - a panic or a crash while running it
+        - it refuses a pattern it should be able to price
+        - slower than the engine it is supposed to save
+        - something else
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The `sheng` release, or the commit SHA if you built it yourself.
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform and target
+      description: >-
+        `rustc --version`, the OS, and which lane you are on - `aarch64`/NEON,
+        `x86_64`/SSSE3, or the scalar fallback. The lane matters: the vector and
+        scalar paths are separate code, and a bug in one is often absent in the
+        other.
+      placeholder: "rustc 1.90.0, macOS 15 aarch64/NEON"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: narrowed
+    attributes:
+      label: Worth trying first
+      description: Not required, but each one narrows this considerably.
+      options:
+        - label: It reproduces in debug as well as release
+        - label: It reproduces on the scalar fallback, not only under SIMD
+        - label: It regressed - a previous version answered correctly
+
+  - type: dropdown
+    id: topic
+    attributes:
+      label: Is this a soundness report?
+      description: >-
+        A refutation that is wrong is a correctness bug in every engine
+        downstream, and it gets read first.
+      options:
+        - "no - it is a crash, a refusal, or a performance problem"
+        - "yes - the sieve refuted something that matches"
+    validations:
+      required: true
