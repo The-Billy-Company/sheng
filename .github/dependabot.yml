@@ -1,4 +1,11 @@
 version: 2
+
+# Each stream states its own commit prefix and labels, because Dependabot is the
+# only thing that can. A run Dependabot initiates holds a read-only token, so the
+# triage workflow declines to label those pull requests and this file is what
+# sorts them instead — and the prefix matters twice over, since `triage` holds
+# every pull request title to the conventional set in `.github/labels.json` and a
+# default `Bump serde from …` is not in it.
 updates:
   # The library's own dependency graph.
   - package-ecosystem: cargo
@@ -8,6 +15,9 @@ updates:
     groups:
       cargo:
         patterns: ["*"]
+    commit-message:
+      prefix: "build"
+    labels: ["type/deps", "area/build"]
 
   # The fuzz crate is excluded from the workspace (nightly-only sanitizer build)
   # and carries its own lockfile, so it needs its own update stream.
@@ -18,6 +28,9 @@ updates:
     groups:
       cargo-fuzz:
         patterns: ["*"]
+    commit-message:
+      prefix: "build"
+    labels: ["type/deps", "area/fuzz"]
 
   # Hash-pinned actions still need bumping deliberately, on the schedule this
   # repository's dotfiles are otherwise silent about.
@@ -25,3 +38,6 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    commit-message:
+      prefix: "ci"
+    labels: ["type/deps", "area/ci"]

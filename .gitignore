@@ -4,6 +4,11 @@ target/
 # Search artifact home (index · atlas · shelf), shared with the sibling CLIs
 .gist/
 
+# Python. This crate ships none, but `.github/scripts/triage.py` runs here, and
+# a bytecode cache one `git add -A` away from the index is not worth the risk.
+__pycache__/
+*.py[cod]
+
 # Toolchain overrides for one machine. `rust-toolchain.toml` is tracked; this is
 # the per-checkout escape hatch and nobody else's business.
 mise.local.toml
@@ -14,3 +19,10 @@ mise.local.lock
 # one `git add -A` away from committing a hardcoded home path.
 .local*/
 .DS_Store
+
+# CPython's bytecode cache beside the triage script. It appears the first time a
+# workflow step runs the script locally, and is one `git add -A` from being
+# committed as a binary blob keyed to whichever interpreter happened to be first
+# on that machine's PATH.
+__pycache__/
+*.pyc
