@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: zizmor-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Audits this repository's own workflows for the injection, impostor-commit, and
   # excess-permission patterns that a hash-pinned action list does not by itself
@@ -20,7 +24,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes with the checkout credential, and leaving it in
+          # .git/config is how it ends up inside an uploaded artifact.
+          persist-credentials: false
       - uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
           tool: zizmor
-      - run: zizmor --persona=pedantic .github/workflows/
+      # Audit at the widest persona so nothing is hidden, but block on severity rather
+      # than on finding count. What `pedantic` adds beyond `low` here is a standing
+      # objection to `dtolnay/rust-toolchain` — "the runner already ships Rust" — which
+      # is true and beside the point, since the toolchain this crate needs per job is
+      # nightly, a pinned MSRV, or two specific architectures, none of which is
+      # whatever the image happens to carry. Those findings still print.
+      - run: zizmor --persona=pedantic --min-severity=low .github/workflows/

@@ -15,6 +15,13 @@ on:
 permissions:
   contents: read
 
+# Serialized per tag, and never cancelled: the other workflows cancel a superseded run
+# because a newer commit makes the older answer irrelevant, but a half-finished publish
+# is not an irrelevant answer.
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   verify:
     name: verify
@@ -23,6 +30,10 @@ jobs:
       version: ${{ steps.version.outputs.value }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes with the checkout credential, and leaving it in
+          # .git/config is how it ends up inside an uploaded artifact.
+          persist-credentials: false
       - id: version
         run: |
           tag="${GITHUB_REF_NAME#v}"
@@ -40,7 +51,10 @@ jobs:
         with:
           toolchain: stable
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      # Deliberately uncached, unlike ci.yml. A restored cache is writable by any
+      # branch that can run a workflow, so a release build that reads one is
+      # verifying bytes an attacker could have contributed. This job runs once per
+      # version and a cold compile costs a couple of minutes.
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - run: cargo test --workspace --release --all-features --locked
@@ -60,10 +74,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes with the checkout credential, and leaving it in
+          # .git/config is how it ends up inside an uploaded artifact.
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      # Uncached for the same reason as `verify`, and more so: this is the job whose
+      # output reaches crates.io.
+      #
       # The one irreversible step in this whole workflow, so it carries its own gate
       # rather than trusting the job to have been skipped correctly: no repository
       # secret, no publish, regardless of what triggered this run.
@@ -83,13 +103,23 @@ jobs:
     needs: [verify, publish]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      # Creating the GitHub release for this tag writes a release object, which the API
+      # counts as repository contents. Nothing else in this job needs a token.
+      contents: write # to create the release for this tag
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes with the checkout credential, and leaving it in
+          # .git/config is how it ends up inside an uploaded artifact.
+          persist-credentials: false
+      # `$VERSION` rather than an inline `${{ }}`: interpolating into a shell script
+      # splices the value in as code, so the tag pattern is the only thing standing
+      # between the trigger and an injection. An env var is passed as data.
       - id: notes
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
         run: |
-          version="${{ needs.verify.outputs.version }}"
-          awk -v v="## [$version]" '
+          awk -v v="## [$VERSION]" '
             $0 == v { found=1; next }
             found && /^## \[/ { exit }
             found { print }
