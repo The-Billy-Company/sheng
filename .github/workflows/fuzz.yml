@@ -20,6 +20,11 @@ jobs:
   smoke:
     name: fuzz smoke (soundness, 180s)
     runs-on: ubuntu-latest
+    # `rust-toolchain.toml` pins 1.96.0 and rustup honors the file over whatever the
+    # setup action made default, so without this every `cargo` below runs on stable and
+    # `cargo fuzz` dies on `-Zsanitizer`. The env override outranks the file.
+    env:
+      RUSTUP_TOOLCHAIN: nightly
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
