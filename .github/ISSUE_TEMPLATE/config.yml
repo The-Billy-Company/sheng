@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/The-Billy-Company/sheng/security/advisories/new
+    about: Do not open a public issue for a suspected soundness or security bug — see SECURITY.md.

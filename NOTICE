@@ -1,0 +1,17 @@
+sheng — register-resident refutation sieves for regex
+Copyright 2026 The Billy Company
+
+This product includes software developed at The Billy Company
+(https://billylives.com/).
+
+No third-party source or data is bundled here. The crate depends on
+regex-automata and memchr through the registry, and both keep their own
+notices; nothing is vendored into this tree.
+
+The idea and the kernel are not original to this package, and the README
+credits them where they are used: the substitution property and its lattice
+are Hartmanis & Stearns (1966); the register-resident DFA is Geoff Langdale's
+Sheng (2018), which ships in Hyperscan; the enumerative parallelization is
+Mytkowicz, Musuvathi & Schulte (ASPLOS 2014); the nibble set classifier is
+Wojciech Muła's SIMDized byte lookup (2018), which ships in Hyperscan as
+shufti. No code was copied from any of them.

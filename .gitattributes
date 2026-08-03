@@ -1,0 +1,29 @@
+# How git should treat the bytes in this repository.
+#
+# Three jobs: keep line endings from becoming a diff, keep resolver output out
+# of review and out of GitHub's language stats, and give git the hunk-header
+# rules that make a diff readable.
+
+# ── Line endings ────────────────────────────────────────────────────────────
+# Normalize on commit, LF in the working tree on every platform. The soundness
+# suite reads its own source files as corpus bytes (`tests/soundness.rs`), so a
+# checkout that silently introduced CRLF would change the very bytes a
+# differential test runs against.
+* text=auto eol=lf
+
+# ── Generated ───────────────────────────────────────────────────────────────
+# Lockfile: resolver output. Reviewed as a fact ("this version moved"), never
+# read line by line.
+Cargo.lock linguist-generated -diff
+
+# ── Diff drivers ────────────────────────────────────────────────────────────
+# Git ships hunk-header patterns for these; naming them here is what makes
+# `@@ ... fn whatever` appear above a hunk instead of a bare line number.
+*.rs  diff=rust
+*.md  diff=markdown
+
+# ── Merge ───────────────────────────────────────────────────────────────────
+# The changelog is append-at-the-top and assembled by towncrier. Two branches
+# adding release sections conflict textually while agreeing semantically; a
+# union merge keeps both and lets the next `towncrier build` sort it out.
+CHANGELOG.md merge=union

@@ -1,0 +1,14 @@
+# Default owners for everything in the repo, unless a later, more specific
+# pattern overrides them below. See https://docs.github.com/articles/about-code-owners
+* @The-Billy-Company/maintainers
+
+# The unsafe SIMD boundary and its safety proofs are the highest-risk surface
+# in this crate and warrant an explicit review gate independent of the
+# blanket rule above.
+/src/arch/ @The-Billy-Company/maintainers
+/src/shuffle.rs @The-Billy-Company/maintainers
+/src/skip.rs @The-Billy-Company/maintainers
+
+# Release and publishing automation touches the crates.io token and tag
+# contract; changes here should not slip in as part of an unrelated diff.
+/.github/workflows/release.yml @The-Billy-Company/maintainers

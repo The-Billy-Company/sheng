@@ -1,0 +1,8 @@
+# Clippy configuration. Most lints are already governed by `[lints.clippy]` in
+# Cargo.toml (denying `undocumented_unsafe_blocks`, allowing `pedantic`); this file
+# only holds the handful of lints that read a *value* rather than a level.
+
+# Mirrors `package.rust-version` in Cargo.toml. Lints like `manual_let_else` and
+# `if_then_some_else_none` gate their suggestion on what the MSRV can actually
+# compile, so a suggestion here is one this crate's floor can build today.
+msrv = "1.95"

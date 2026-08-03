@@ -1,0 +1,27 @@
+version: 2
+updates:
+  # The library's own dependency graph.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo:
+        patterns: ["*"]
+
+  # The fuzz crate is excluded from the workspace (nightly-only sanitizer build)
+  # and carries its own lockfile, so it needs its own update stream.
+  - package-ecosystem: cargo
+    directory: /fuzz
+    schedule:
+      interval: weekly
+    groups:
+      cargo-fuzz:
+        patterns: ["*"]
+
+  # Hash-pinned actions still need bumping deliberately, on the schedule this
+  # repository's dotfiles are otherwise silent about.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

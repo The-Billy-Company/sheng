@@ -1,0 +1,38 @@
+name: Fuzz
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # A bounded smoke, not a campaign: three minutes is enough to catch a soundness
+  # regression that a fixed differential sweep could miss, without turning every PR
+  # into a fuzzing run. `fuzz/README.md` has the unbounded invocation for when a
+  # change actually warrants one.
+  smoke:
+    name: fuzz smoke (soundness, 180s)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: fuzz -> target
+      - run: cargo install cargo-fuzz --locked
+      - run: cargo fuzz run soundness -- -max_total_time=180
+      - if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-crash-soundness
+          path: fuzz/artifacts/soundness/
+          if-no-files-found: ignore

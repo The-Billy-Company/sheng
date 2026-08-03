@@ -1,0 +1,29 @@
+[package]
+name = "sheng-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.sheng]
+path = ".."
+
+# The oracle needs a real matcher to disagree with, same as `tests/soundness.rs`.
+[dependencies.regex-automata]
+version = "0.4.16"
+features = ["std", "syntax", "nfa-thompson", "dfa-build", "dfa-search"]
+
+[[bin]]
+name = "soundness"
+path = "fuzz_targets/soundness.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

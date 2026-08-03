@@ -1,0 +1,53 @@
+name: Miri
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: miri-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Scoped to the crate's portable logic — the priors, the cost model, and the
+  # register-composition constants that run without ever touching an unsafe kernel
+  # or building a `regex-automata` DFA. Two things are excluded on purpose, for two
+  # different reasons:
+  #
+  # * The hand-written NEON and SSSE3 in `src/arch/`, reached from four
+  #   `skip::tests` and from every integration test in `tests/`. These are checked
+  #   instead by real silicon in `ci.yml`'s cross-architecture matrix, running the
+  #   actual instructions rather than an interpreter's approximation of them.
+  # * `selectivity`'s byte-level cross-check and every DFA-building test
+  #   (`tests/policy.rs`, `tests/soundness.rs`, `selectivity::tests::grouping_*`).
+  #   `regex-automata` determinization is measurably expensive even natively (see
+  #   `src/selectivity.rs`'s own "~50 ms per Sieve::new" note) and Miri's
+  #   interpretation overhead turns that into whole minutes per call — a real cost
+  #   with no UB left to find along that path, since determinization touches no
+  #   `unsafe` this crate owns.
+  miri:
+    name: miri (portable paths)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: nightly
+          components: miri
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: miri
+      - run: cargo miri setup
+      - env:
+          MIRIFLAGS: -Zmiri-strict-provenance
+        run: |
+          cargo miri test --locked --lib -- \
+            --skip skip::tests::every_instrument_agrees_with_the_definition \
+            --skip skip::tests::the_classifier_admits_exactly_the_set \
+            --skip skip::tests::the_classifier_is_exact_on_sets_nobody_hand_picked \
+            --skip skip::tests::an_escape_is_found_at_every_offset_of_every_length \
+            --skip selectivity::tests::grouping_the_bytes_by_class_computes_the_same_chain

@@ -1,0 +1,112 @@
+# Its own workspace root, deliberately. An empty `[workspace]` table means a
+# Cargo.toml appearing above this directory later cannot silently absorb the
+# crate and take over its lockfile and lint configuration. `resolver = "3"` is
+# declared rather than left to the edition-2024 default, for the same reason
+# `autoexamples` is declared below: this crate's build shape is a fact stated
+# once, not inferred from whichever Cargo happens to run it. `fuzz/` is excluded
+# rather than made a member: cargo-fuzz's nightly-only sanitizer build must never
+# share a lockfile with the stable library it targets.
+[workspace]
+resolver = "3"
+exclude = [ "fuzz" ]
+
+[package]
+name = "sheng"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+# 1.95 is the floor the sources actually need; `rust-toolchain.toml` pins 1.96.0
+# for development so everyone formats and lints identically.
+rust-version = "1.95"
+# Declared, not discovered, so `examples/common.rs` can be a shared module instead of a
+# third example with no `main` — and so the examples directory stays flat.
+autoexamples = false
+description = "Register-resident refutation sieves for regex. Builds Hartmanis-Stearns SP-quotients of a pattern's automaton small enough to live in a SIMD register, and uses them to prove a document match-free before a real engine ever walks it. Sound by construction: a sieve may pass a non-matching document, never reject a matching one."
+readme = "README.md"
+homepage = "https://github.com/The-Billy-Company/sheng"
+repository = "https://github.com/The-Billy-Company/sheng"
+documentation = "https://docs.rs/sheng"
+authors = [ "The Billy Company" ]
+# crates.io allows five, so each has to earn its slot. `prefilter` is the term
+# somebody types when they already know they want this shape of thing;
+# `refutation` is the one nothing else on the index claims.
+keywords = [ "regex", "prefilter", "simd", "automata", "refutation" ]
+categories = [ "text-processing", "algorithms" ]
+# The examples are instruments, not demos — `mint` is how a machine gets its
+# calibration row — so they ship. Build output does not.
+exclude = [ "/target" ]
+
+[dependencies]
+# The only dependency, and it is the point: sheng reads its automaton from
+# regex-automata's PUBLIC `thompson::NFA` surface rather than reimplementing a
+# parser, so a pattern means here exactly what it means to the engine that runs
+# the confirming search.
+regex-automata = { version = "0.4.16", default-features = false, features = [
+  "std",
+  "syntax",
+  "nfa-thompson",
+  "dfa-build",
+] }
+
+# The 1-to-3-byte searcher behind `skip::Escape::Few`. Already in the graph under
+# regex-automata, and nothing hand-rolled here would match its tuning at that width
+# — so the sieve borrows it rather than writing a fourth-best memchr.
+memchr = { version = "2.8.3", default-features = false, features = ["std"] }
+
+[[example]]
+name = "bench"
+path = "examples/bench.rs"
+
+[[example]]
+name = "skip"
+path = "examples/skip.rs"
+
+[[example]]
+name = "mint"
+path = "examples/mint.rs"
+
+[[example]]
+name = "survey"
+path = "examples/survey.rs"
+
+[dev-dependencies]
+# The soundness harness needs a full engine to disagree with.
+regex-automata = { version = "0.4.16", features = [
+  "std",
+  "syntax",
+  "nfa-thompson",
+  "dfa-build",
+  "dfa-search",
+] }
+
+[lints.rust]
+# Every `unsafe` operation states its own invariant; an `unsafe fn` body is not
+# a blanket permission slip for the operations inside it.
+unsafe_op_in_unsafe_fn = "deny"
+# The stage modules stay `pub` for `Policy`'s measured types and the calibration
+# examples, not as an invitation to read them undocumented — every item reachable
+# from outside the crate earns an explanation of what it is.
+missing_docs = "deny"
+
+[lints.clippy]
+# Library-light posture: pedantic is advisory here, not a gate.
+pedantic = { level = "allow", priority = -1 }
+# The rule that every `unsafe` block carries a `// SAFETY:` comment, enforced by
+# the compiler instead of by review. This crate's entire risk surface is the
+# hand-written NEON and SSSE3 in `shuffle.rs` and `skip.rs`, so it is the one
+# lint worth denying.
+undocumented_unsafe_blocks = "deny"
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 16
+
+[profile.dev]
+debug = "line-tables-only"
+
+# Measurement builds keep symbols so a profiler can attribute the shuffle kernel.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false
