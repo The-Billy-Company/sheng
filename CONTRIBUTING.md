@@ -118,6 +118,11 @@ restatement of the diff.
 Skip it only for comment-only, format-only, or genuinely invisible internal
 work. When unsure, write it.
 
+This repository's tag, changelog, and publish steps are one instance of a
+model shared across every Billy-Company OSS package - see
+[RELEASING.md](https://github.com/The-Billy-Company/.github/blob/main/RELEASING.md)
+for the lifecycle this feeds into and why it's shaped this way.
+
 ## Commits and Pull Requests
 
 Commit subjects are a conventional prefix plus a lowercase sentence that says
