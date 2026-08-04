@@ -106,7 +106,8 @@ accepted, and it carries three obligations in the same PR:
 Write a towncrier fragment in the same PR:
 
 ```bash
-towncrier create '+<slug>.<type>.md'    # types: added changed deprecated removed fixed security
+# types: added changed deprecated removed fixed security
+towncrier create '+<slug>.<type>.md'
 ```
 
 Fragment names read like the sentence they are:
