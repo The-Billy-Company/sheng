@@ -118,6 +118,11 @@ restatement of the diff.
 Skip it only for comment-only, format-only, or genuinely invisible internal
 work. When unsure, write it.
 
+This repository's tag, changelog, and publish steps are one instance of a
+model shared across every Billy-Company OSS package - see
+[RELEASING.md](https://github.com/The-Billy-Company/.github/blob/main/RELEASING.md)
+for the lifecycle this feeds into and why it's shaped this way.
+
 ## Commits and Pull Requests
 
 Commit subjects are a conventional prefix plus a lowercase sentence that says
@@ -153,6 +158,17 @@ To add yours, run `cargo run --release --example mint` on an idle machine and
 paste what it emits. Every constant it prints carries the machine, the kernel,
 and the date that produced it; a measured value with no machine beside it is an
 anecdote.
+
+The key is `(architecture, kernel)`, not `(os, architecture, kernel)` -
+`src/arch/` never forks on the operating system, so a new OS on an
+already-measured architecture is evidence for the existing row, not a reason
+to mint another. [`.github/workflows/native.yml`](.github/workflows/native.yml)
+runs the full differential and economic gate natively on all six
+Windows/Linux/macOS × x86_64/arm64 targets on every push; a PR that makes one
+of those six lose is the signal that row needs splitting on `os`, and the
+failing job names exactly which target measured it. Do not add an `os` field
+speculatively - add it the day a leg's own numbers require it, with that leg's
+own measurement.
 
 ## Licensing
 
