@@ -1,16 +1,27 @@
 name: Release
 
 # Guarded: every step through `cargo publish --dry-run` always runs, so a tag with
-# a version mismatch or a broken package fails loudly. The one irreversible step —
-# `cargo publish` itself — additionally requires the `CARGO_REGISTRY_TOKEN`
-# repository secret to be configured, so pushing this workflow file grants no
-# publish capability by itself. A maintainer prepares a release by running
-# `towncrier build --version X.Y.Z`, committing the folded `CHANGELOG.md`, bumping
-# `Cargo.toml`, and tagging — this workflow verifies that was done, it does not do
-# it for you.
+# a version mismatch or a broken package fails loudly. `preflight` re-proves, on
+# the immutable tagged commit, everything a maintainer is supposed to have done
+# by hand before tagging: the tag names the version `Cargo.toml` declares, every
+# marked mirror agrees, changelog.d/ was folded (not left with pending
+# fragments), the tag is reachable from `main`, and `release-ready` was green on
+# this exact SHA. The one irreversible step — `cargo publish` itself — uses
+# crates.io Trusted Publishing (OIDC), so pushing this workflow file grants no
+# publish capability by itself; a maintainer prepares a release by merging the
+# release-please PR, which already folded the changelog and bumped the version,
+# and release-please itself cuts the GitHub Release the moment that PR merges —
+# this workflow only ever publishes the crate.
+#
+# ONE-TIME SETUP: crates.io Trusted Publishing, so there is no
+# `CARGO_REGISTRY_TOKEN` to rotate or leak. On crates.io, add a trusted
+# publisher to the `sheng` crate pointing at this repository, workflow
+# `release.yml`, environment `crates-io`. crates.io requires the crate to
+# exist first, so this crate's first release must already be published.
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -23,30 +34,55 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preflight:
+    # The shared release contract (`release.toml` + the org's `package-release`
+    # action), run once before anything is built: is the tag the version
+    # `Cargo.toml` and every mirror declare, is the changelog folded with the
+    # exact `## [X.Y.Z]` heading and no fragment left un-folded, did
+    # `release-ready` go green on this exact commit, and is this commit
+    # actually reachable from `main`? Every step below is conditioned on an
+    # actual tag, so a `workflow_dispatch` dry run (no tag) passes through as
+    # a no-op and `verify`/`native` still run unpublished.
+    name: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - id: version
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: The-Billy-Company/.github/actions/package-release@deb135f046122a10cabc861e96eb9941c2d09ddc # main
+        with:
+          command: version
+          args: --root . --tag ${{ github.ref_name }}
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: The-Billy-Company/.github/actions/package-release@deb135f046122a10cabc861e96eb9941c2d09ddc # main
+        with:
+          command: changelog
+          args: >-
+            --root . --require-fragments-empty
+            --version ${{ fromJSON(steps.version.outputs.result).version }}
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: The-Billy-Company/.github/actions/package-release@deb135f046122a10cabc861e96eb9941c2d09ddc # main
+        with:
+          command: tag-ancestor
+          args: ${{ github.repository }} ${{ github.sha }} --branch main
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: The-Billy-Company/.github/actions/package-release@deb135f046122a10cabc861e96eb9941c2d09ddc # main
+        with:
+          command: ci-status
+          args: ${{ github.repository }} ${{ github.sha }}
+
   verify:
     name: verify
+    needs: preflight
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.value }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Nothing here pushes with the checkout credential, and leaving it in
           # .git/config is how it ends up inside an uploaded artifact.
           persist-credentials: false
-      - id: version
-        run: |
-          tag="${GITHUB_REF_NAME#v}"
-          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
-          if [ "$tag" != "$cargo_version" ]; then
-            echo "::error::tag v$tag does not match Cargo.toml version $cargo_version"
-            exit 1
-          fi
-          if ! grep -qF "## [$tag]" CHANGELOG.md; then
-            echo "::error::CHANGELOG.md has no '## [$tag]' entry — run 'towncrier build --version $tag' and commit it before tagging"
-            exit 1
-          fi
-          echo "value=$tag" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: stable
@@ -57,7 +93,6 @@ jobs:
       # version and a cold compile costs a couple of minutes.
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - run: cargo test --workspace --release --all-features --locked
       - env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --all-features --locked
@@ -68,12 +103,30 @@ jobs:
       - run: cargo package --locked
       - run: cargo publish --dry-run --locked
 
+  # The six-target native correctness + economic proof, called uncached for the
+  # same reason `verify` above is: this run gates the one irreversible step in the
+  # whole workflow, so it verifies bytes this run compiled itself rather than
+  # anything a cache handed it. `verify`'s own `cargo test` ran on `ubuntu-latest`
+  # alone before this job existed — that single leg is now subsumed by all six here,
+  # not skipped.
+  native:
+    name: native
+    needs: preflight
+    uses: ./.github/workflows/native.yml
+    with:
+      cache: false
+
   publish:
     name: publish
-    needs: verify
+    needs: [preflight, verify, native]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      # The OIDC token Trusted Publishing exchanges for a short-lived registry token.
+      id-token: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Nothing here pushes with the checkout credential, and leaving it in
           # .git/config is how it ends up inside an uploaded artifact.
@@ -81,50 +134,37 @@ jobs:
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: stable
-      # Uncached for the same reason as `verify`, and more so: this is the job whose
-      # output reaches crates.io.
-      #
-      # The one irreversible step in this whole workflow, so it carries its own gate
-      # rather than trusting the job to have been skipped correctly: no repository
-      # secret, no publish, regardless of what triggered this run.
-      #
-      # The gate reads `env`, not `secrets`, because Actions rejects the `secrets`
-      # context inside any `if:` at parse time — a workflow spelling it that way does
-      # not fail closed, it fails to load, and every job in it silently never runs.
-      # Aliasing the secret into step `env` is the documented way to condition on one.
-      - name: cargo publish
-        if: env.CARGO_REGISTRY_TOKEN != ''
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --locked
-
-  github-release:
-    name: github release
-    needs: [verify, publish]
-    runs-on: ubuntu-latest
-    permissions:
-      # Creating the GitHub release for this tag writes a release object, which the API
-      # counts as repository contents. Nothing else in this job needs a token.
-      contents: write # to create the release for this tag
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: tag
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      # Asked before a credential is minted, not after a failed upload. A retry
+      # after a flake, or a dispatch on an existing tag, must not fail because the
+      # version is already on the index — a published version is immutable there,
+      # so "already present" is success. An "error" probe (registry unreachable)
+      # is a hard fail: it must never be read as "absent" and re-published blind.
+      - id: probe
+        uses: The-Billy-Company/.github/actions/package-release@deb135f046122a10cabc861e96eb9941c2d09ddc # main
         with:
-          # Nothing here pushes with the checkout credential, and leaving it in
-          # .git/config is how it ends up inside an uploaded artifact.
-          persist-credentials: false
-      # `$VERSION` rather than an inline `${{ }}`: interpolating into a shell script
-      # splices the value in as code, so the tag pattern is the only thing standing
-      # between the trigger and an injection. An env var is passed as data.
-      - id: notes
+          command: registry-probe
+          args: crates sheng ${{ steps.tag.outputs.version }}
+      - name: probe answered
         env:
-          VERSION: ${{ needs.verify.outputs.version }}
+          STATE: ${{ steps.probe.outputs.result }}
         run: |
-          awk -v v="## [$VERSION]" '
-            $0 == v { found=1; next }
-            found && /^## \[/ { exit }
-            found { print }
-          ' CHANGELOG.md > /tmp/release-notes.md
-      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
-        with:
-          body_path: /tmp/release-notes.md
-          generate_release_notes: false
+          set -euo pipefail
+          if [ "$STATE" = error ]; then
+            echo "::error::crates.io did not answer for sheng ${{ steps.tag.outputs.version }} —" \
+                 "a network failure is never treated as \"absent\"." >&2
+            exit 1
+          fi
+          echo "sheng ${{ steps.tag.outputs.version }} on crates.io: $STATE"
+      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        id: auth
+        if: steps.probe.outputs.result == 'absent'
+      - name: cargo publish
+        if: steps.probe.outputs.result == 'absent'
+        # Uncached for the same reason as `verify`, and more so: this is the job whose
+        # output reaches crates.io. No repository secret, no long-lived token — the
+        # `crates-io` environment's OIDC identity is what authorizes this publish.
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish --locked
