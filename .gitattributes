@@ -16,6 +16,16 @@
 # read line by line.
 Cargo.lock linguist-generated -diff
 
+# ── Apparatus ───────────────────────────────────────────────────────────────
+# Code that operates this repository, rather than being it. `linguist-detectable
+# =false` drops it from the language breakdown only - it stays in the tree, in
+# review, and in diffs.
+#
+# This mattered the moment .github/ gained the label triage script: sheng is a
+# Rust crate and nothing else, and 36K of repository plumbing was enough to
+# claim the bar was 14% Python. Excluded, it reads Rust 100%, which is true.
+.github/**  linguist-detectable=false
+
 # ── Diff drivers ────────────────────────────────────────────────────────────
 # Git ships hunk-header patterns for these; naming them here is what makes
 # `@@ ... fn whatever` appear above a hunk instead of a bare line number.

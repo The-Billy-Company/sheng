@@ -1,0 +1,9 @@
+# git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Add full commit SHAs for mass-format or migration commits below. They vanish
+# from blame without vanishing from history.
+#
+# Empty on purpose. An audit of this history for the shape blame mistakes -
+# broad, balanced churn where a line was rewritten without being rethought -
+# turned up nothing to list. The renames and reformats that earned entries in
+# the sibling repos happened before sheng was split out.

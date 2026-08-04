@@ -1,0 +1,20 @@
+# One identity per person, however git happened to be configured that day.
+#
+# This file only changes what git *reports* - `git shortlog -sne`, `git blame`,
+# `git log --use-mailmap`, and the contributor list GitHub renders. It rewrites
+# no history and no commit object.
+#
+# sheng has a single contributor and got off lighter than its siblings: no
+# hostname-only addresses, no personal-address-turned-work-address. The one
+# thing to fix is the spelling. Every commit here is authored by a lowercase
+# `griffin`, so that is what GitHub's contributor list and every shortlog show,
+# while the sibling repos all say `Griffin`. One line makes the six agree.
+#
+# Left of the second `<...>` is the canonical identity; right of it is the
+# spelling found in history. Add a line rather than asking anyone to rewrite a
+# commit.
+#
+# Format: Proper Name <proper@email> <commit@email>
+# See `git help shortlog` (MAPPING AUTHORS).
+
+Griffin <griffin@billylives.com> griffin <griffin@billylives.com>
