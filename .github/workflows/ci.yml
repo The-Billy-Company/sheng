@@ -21,7 +21,7 @@ jobs:
     name: fmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Nothing here pushes with the checkout credential, and leaving it in
           # .git/config is how it ends up inside an uploaded artifact.
@@ -49,7 +49,7 @@ jobs:
             label: aarch64-neon
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Nothing here pushes with the checkout credential, and leaving it in
           # .git/config is how it ends up inside an uploaded artifact.
@@ -73,7 +73,7 @@ jobs:
             label: aarch64-neon
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Nothing here pushes with the checkout credential, and leaving it in
           # .git/config is how it ends up inside an uploaded artifact.
@@ -92,7 +92,7 @@ jobs:
     name: rustdoc
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Nothing here pushes with the checkout credential, and leaving it in
           # .git/config is how it ends up inside an uploaded artifact.
@@ -112,7 +112,7 @@ jobs:
     name: msrv
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Nothing here pushes with the checkout credential, and leaving it in
           # .git/config is how it ends up inside an uploaded artifact.
@@ -129,7 +129,7 @@ jobs:
     name: cargo-deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Nothing here pushes with the checkout credential, and leaving it in
           # .git/config is how it ends up inside an uploaded artifact.
@@ -147,7 +147,7 @@ jobs:
     needs: [fmt, clippy, test, doc, msrv, deny]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Nothing here pushes with the checkout credential, and leaving it in
           # .git/config is how it ends up inside an uploaded artifact.
