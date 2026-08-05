@@ -105,7 +105,11 @@ impl Projection {
         let start = dfa
             .start_state_forward(&Input::new(b""))
             .map_err(|_| Decline::Quits)?;
-        if dfa.is_match_state(start) {
+        // Mirrors `Row.accepts` below: `regex-automata`'s start state is never itself
+        // a match state — even for a pattern that matches empty — because it encodes
+        // "about to try", not "already matched". The empty-match acceptance only
+        // shows up one step later, at the end-of-input transition.
+        if dfa.is_match_state(start) || dfa.is_match_state(dfa.next_eoi_state(start)) {
             return Err(Decline::MatchesEmpty);
         }
 
