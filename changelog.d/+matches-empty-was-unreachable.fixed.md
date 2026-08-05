@@ -9,9 +9,9 @@ through `Sieve::new` turned this up directly, by fuzzing the one input the
 existing suites always assumed was already well-formed: the pattern itself.
 
 In practice every pattern that matches empty still declined - via the lattice
-harvest finding no discriminating quotient and returning `NoQuotient` instead
-- so this was never a soundness gap, only the wrong reason and a wasted
-harvest. `Projection::of` now checks `next_eoi_state(start)` too, and
+harvest finding no discriminating quotient and returning `NoQuotient` instead -
+so this was never a soundness gap, only the wrong reason and a wasted harvest.
+`Projection::of` now checks `next_eoi_state(start)` too, and
 `a*`, `.*`, the empty pattern, and `a**` all now decline with the specific,
 documented `MatchesEmpty` reason instead of the generic `NoQuotient`.
 

@@ -1,0 +1,7 @@
+{
+  // Towncrier fragments (`changelog.d/+<slug>.<type>.md`) are unwrapped
+  // (`wrap = false` in towncrier.toml) multi-paragraph prose folded verbatim
+  // into CHANGELOG.md — they were never meant to stand alone as documents
+  // and, by the format's own convention, never carry a heading.
+  "ignores": ["changelog.d/+*.md"]
+}

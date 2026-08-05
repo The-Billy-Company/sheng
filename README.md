@@ -149,11 +149,11 @@ exposes their measured types for override.
 ## Development
 
 ```bash
-cargo test --release                                   # soundness, judged ungated
-cargo run --release --example survey                   # end to end; asserts no armed row loses
-cargo run --release --example skip                     # per-lane skip-vs-compose, audits the planner
-cargo run --release --example bench                    # per-stage build cost and kernel ns/byte
-cargo run --release --example mint                     # re-mint the prior and the calibration
+cargo test --release                   # soundness, judged ungated
+cargo run --release --example survey   # end to end, no armed row may lose
+cargo run --release --example skip     # per-lane skip-vs-compose audit
+cargo run --release --example bench    # per-stage build cost, kernel ns/byte
+cargo run --release --example mint     # re-mints the prior and calibration
 SHENG_NO_SKIP=1 cargo run --release --example survey   # the pre-skip baseline
 SHENG_CORPUS=/path/to/your/documents cargo run --release --example mint
 ```
