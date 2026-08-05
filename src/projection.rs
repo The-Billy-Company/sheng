@@ -51,6 +51,24 @@ pub enum Decline {
     TooWide,
 }
 
+impl std::fmt::Display for Decline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Quits => write!(
+                f,
+                "the automaton carries quit bytes and can abandon a scan mid-run"
+            ),
+            Self::MatchesEmpty => write!(
+                f,
+                "the start state already matches, so every position accepts"
+            ),
+            Self::TooWide => write!(f, "the reachable core exceeds {MAX_CORE_STATES} states"),
+        }
+    }
+}
+
+impl std::error::Error for Decline {}
+
 /// A `dense::DFA` projected onto its reachable core: compact state ids, one
 /// transition table over derived byte classes, and the accept set.
 ///

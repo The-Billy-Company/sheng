@@ -45,7 +45,7 @@ impl std::fmt::Display for BuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Automaton(why) => write!(f, "no sieve: {why}"),
-            Self::Shape(d) => write!(f, "no sieve: automaton shape ({d:?})"),
+            Self::Shape(d) => write!(f, "no sieve: {d}"),
             Self::NoQuotient => write!(
                 f,
                 "no sieve: no register-sized closed partition discriminates"
