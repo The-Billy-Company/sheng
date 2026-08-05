@@ -108,6 +108,9 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          # The App token is used only by the explicit git push below.
+          # Do not leave it behind for a later step to upload in an artifact.
+          persist-credentials: false
           token: ${{ steps.app-token.outputs.token }}
           ref: ${{ fromJson(needs.release-please.outputs.pr).headBranchName }}
 

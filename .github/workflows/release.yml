@@ -124,7 +124,7 @@ jobs:
     environment: crates-io
     permissions:
       # The OIDC token Trusted Publishing exchanges for a short-lived registry token.
-      id-token: write
+      id-token: write # crates.io exchanges this OIDC identity for the publish token
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

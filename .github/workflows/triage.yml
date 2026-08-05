@@ -78,7 +78,7 @@ jobs:
       && github.event.pull_request.user.login != 'dependabot[bot]'
     permissions:
       contents: read
-      pull-requests: write
+      pull-requests: write # apply labels derived from the pull request's metadata
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -98,7 +98,7 @@ jobs:
     if: github.event_name == 'pull_request_target'
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: read # inspect the title through the API without modifying it
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

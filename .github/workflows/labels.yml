@@ -72,7 +72,7 @@ jobs:
     needs: verify
     permissions:
       contents: read
-      issues: write
+      issues: write # sync creates, updates, and prunes labels declared in labels.json
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
