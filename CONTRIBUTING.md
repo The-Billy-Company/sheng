@@ -139,6 +139,15 @@ Prefixes in use: `feat` `fix` `perf` `refactor` `docs` `test` `build` `ci`
 `chore`. Keep the subject under about 72 characters and put the reasoning in the
 body, where reviewers and `git log` both find it.
 
+The subject line becomes the squash commit message, and that is what
+release-please reads to pick the next version - shifted one column left while
+this crate is still 0.x. A breaking change and a `feat` both take the minor,
+so `0.1.0` goes to `0.2.0` for either and to `0.1.1` for everything else, and
+nothing declares 1.0.0 on our behalf until we mean to. The post-1.0 table, and
+the `Release-As: X.Y.Z` footer that pins an exact version the rules would not
+pick, are in the org standard, [What Picks the
+Number](https://github.com/The-Billy-Company/.github/blob/main/RELEASING.md#what-picks-the-number).
+
 For the pull request: one concern per PR, and describe what would have caught
 the bug if it had existed. Reviews here ask three questions more than any
 others - what proves this, what does it cost, and what did it replace.
