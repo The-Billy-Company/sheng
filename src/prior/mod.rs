@@ -23,13 +23,14 @@
 //!
 //! # One model, four corpora
 //!
-//! The shape above is the model; [`minted`] holds what it measured. Four corpora are
-//! shipped — a polyglot code tree, English literary prose, machine-generated JSON, and
-//! sixteen systems' production logs — because a chain minted on source text is a claim
-//! about source text, and shipping only that one meant a caller filtering prose was
-//! being priced under a model of somebody else's Rust. They disagree at the coarsest
-//! level: `Space` is the most self-following class in a code tree and the *least* in
-//! prose. Read [`minted`] for what each says and where each came from.
+//! The shape above is the model; [`SOURCE`], [`PROSE`], [`JSON`] and [`LOG`] hold what
+//! it measured. Four corpora are shipped — a polyglot code tree, English literary
+//! prose, machine-generated JSON, and sixteen systems' production logs — because a
+//! chain minted on source text is a claim about source text, and shipping only that
+//! one meant a caller filtering prose was being priced under a model of somebody
+//! else's Rust. They disagree at the coarsest level: `Space` is the most
+//! self-following class in a code tree and the *least* in prose. Read [`Prior`] for
+//! what each says and where each came from.
 //!
 //! # The memoryless priors are kept, deliberately
 //!

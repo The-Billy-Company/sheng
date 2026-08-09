@@ -164,7 +164,6 @@ use prior::Chain;
 pub struct Sieve {
     lanes: Vec<Lane>,
     cost: CostFact,
-    _teeth: alloc::rc::Rc<u8>,
 }
 
 /// One conjunct, together with how it was decided this conjunct reads a haystack.
