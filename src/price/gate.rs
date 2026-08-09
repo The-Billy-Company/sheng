@@ -21,8 +21,30 @@
 /// What does not survive shortening is the advantage itself. Below roughly a kilobyte
 /// the sieve's measured edge over a walking rival falls by more than half, and this
 /// length sits near where that edge saturates. So a caller who really searches
-/// 64-byte records cannot read a verdict taken at 4 KiB as one taken at theirs.
+/// 64-byte records cannot read a verdict taken at 4 KiB as one taken at theirs —
+/// which is what [`VALIDITY_FLOOR`] refuses.
 pub const NOMINAL_LEN: f64 = 4096.0;
+
+/// The shortest document a verdict may be taken at, below which the gate declines
+/// rather than extrapolate.
+///
+/// Two things the model leaves out grow as the document shrinks, and neither is a
+/// coefficient that could simply be re-minted. A per-call cost that is under a percent
+/// of the sieve at [`NOMINAL_LEN`] is around half of it at 64 bytes; and the sieve's
+/// measured edge over a walking rival, flat from a few kilobytes up, collapses to
+/// roughly a third of that by 64 bytes. Both inflate the *predicted* speedup, so both
+/// argue for arming, and a caller near the threshold would be armed on the difference.
+///
+/// [`MARGIN`] is the yardstick for where that becomes intolerable rather than merely
+/// imprecise, which is what puts this constant here instead of at a rounder number.
+/// Down to a few hundred bytes each effect stays inside the margin already being held
+/// back, so the existing cushion absorbs them and no verdict changes. Below that they
+/// exceed it — at which point arming is being decided by the terms the model does not
+/// carry, and the honest answer is that this row was not measured over documents like
+/// these. Declining costs such a caller a real speedup, sometimes several-fold; it is
+/// still the right way to be wrong, for the reason [`MARGIN`] gives — a decline costs
+/// the speedup once, an arm on noise costs a full sieve pass per document forever.
+pub const VALIDITY_FLOOR: f64 = 256.0;
 
 /// How much a modeled speedup must beat 1.0 by before it counts as a decision
 /// rather than a coincidence.

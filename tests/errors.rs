@@ -129,6 +129,7 @@ fn shape(result: &Result<Sieve, BuildError>) -> &'static str {
         Err(BuildError::Shape(Decline::TooWide)) => "too_wide",
         Err(BuildError::NoQuotient) => "no_quotient",
         Err(BuildError::Uncalibrated { .. }) => "uncalibrated",
+        Err(BuildError::Unmodeled { .. }) => "unmodeled",
         Err(BuildError::NotWorthIt(_)) => "not_worth_it",
     }
 }
@@ -261,6 +262,10 @@ fn every_declared_error_variant_explains_itself_consistently() {
         BuildError::Uncalibrated {
             arch: "hypothetical",
             kernel: sheng::shuffle::kernel(),
+        },
+        BuildError::Unmodeled {
+            len: 64.0,
+            floor: sheng::price::VALIDITY_FLOOR,
         },
         BuildError::NotWorthIt(cost),
     ];

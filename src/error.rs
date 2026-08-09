@@ -34,6 +34,24 @@ pub enum BuildError {
         /// Which kernel this target would dispatch to, had a price been minted for it.
         kernel: Kernel,
     },
+    /// The caller says it will search documents shorter than the calibration was
+    /// measured over, so a verdict drawn from it would not be about their traffic.
+    ///
+    /// Distinct from [`Uncalibrated`](Self::Uncalibrated) in what is missing: the row
+    /// for this machine exists and was measured honestly, it just does not describe
+    /// documents this short. Distinct from [`NotWorthIt`](Self::NotWorthIt) in that no
+    /// verdict was reached at all — the terms the model omits would have decided it. See
+    /// [`price::VALIDITY_FLOOR`].
+    ///
+    /// A caller who knows their traffic and wants a filter anyway can say so with
+    /// [`Gate::Ungated`](crate::Gate::Ungated), which consults no price. What is not on
+    /// offer is a promise this crate has no measurement behind.
+    Unmodeled {
+        /// The nominal length the caller declared, in bytes.
+        len: f64,
+        /// [`price::VALIDITY_FLOOR`], the shortest a verdict may be taken at.
+        floor: f64,
+    },
     /// A sieve exists and is sound, but fronting this particular engine with it
     /// does not measurably beat letting the engine run alone — so it declines rather
     /// than slow the caller down. The retained arithmetic says why.
@@ -60,6 +78,11 @@ impl core::fmt::Display for BuildError {
                 f,
                 "no sieve: nothing measured for {arch} with the {kernel:?} kernel — \
                  mint a calibration and pass it in a Policy"
+            ),
+            Self::Unmodeled { len, floor } => write!(
+                f,
+                "no sieve: a verdict at {len:.0} bytes would be an extrapolation — the \
+                 calibration was measured over documents, and holds down to {floor:.0}"
             ),
             Self::NotWorthIt(cost) => write!(
                 f,

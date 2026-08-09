@@ -424,6 +424,16 @@ impl Sieve {
                 kernel: shuffle::kernel(),
             });
         }
+        // NaN is named rather than left to the comparison, which every ordering answers
+        // `false` to: an unorderable length belongs with the ones nothing was measured
+        // over, not sailing through the arithmetic downstream of here.
+        let unmodeled = policy.len < price::VALIDITY_FLOOR || policy.len.is_nan();
+        if policy.gate == Gate::Worth && unmodeled {
+            return Err(BuildError::Unmodeled {
+                len: policy.len,
+                floor: price::VALIDITY_FLOOR,
+            });
+        }
         let core = projection::Projection::of(dfa).map_err(BuildError::Shape)?;
         let quotients = lattice::harvest(&core);
         if quotients.is_empty() {

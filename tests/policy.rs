@@ -250,6 +250,75 @@ fn longer_documents_are_harder_to_justify() {
     );
 }
 
+/// The other end of the same length argument, and the one that is a code path.
+///
+/// `longer_documents_are_harder_to_justify` covers the direction the model *does*
+/// describe: survival grows with length, so a long document is a worse deal. Shortening
+/// runs off the end of the measurement instead. Two terms the per-byte model omits — a
+/// per-call cost, and the sieve's edge over a walking rival — are each worth less than
+/// `MARGIN` down to a few hundred bytes and more than it below, so under the floor the
+/// arming decision would rest on exactly the arithmetic that is missing.
+///
+/// The distinction that matters is which refusal comes back. A sub-floor caller is not
+/// being told their pattern does not pay — nothing was priced at all — so `Unmodeled`
+/// and `NotWorthIt` must not be interchangeable here, and a pattern that arms at the
+/// nominal length is the only way to tell them apart.
+#[test]
+fn a_document_shorter_than_anything_measured_gets_no_verdict() {
+    if !sheng::price::active(AT).is_measured(AT) {
+        return; // covered by the unmeasured tests above
+    }
+    let floor = sheng::price::VALIDITY_FLOOR;
+    let at = |len: f64, gate: Gate| Policy {
+        len,
+        gate,
+        ..Policy::new(AT)
+    };
+    let mut judged = 0;
+    for pattern in ARMING {
+        // A pattern that already declines at nominal length would decline under the
+        // floor too, and could not show *which* refusal the floor is responsible for.
+        if Sieve::with(pattern, &Policy::new(AT)).is_err() {
+            continue;
+        }
+        judged += 1;
+        for len in [floor - 1.0, 8.0, 0.0, f64::NAN] {
+            match Sieve::with(pattern, &at(len, Gate::Worth)) {
+                Err(BuildError::Unmodeled { len: got, floor: named }) => {
+                    assert!(
+                        got.to_bits() == len.to_bits(),
+                        "{pattern:?}: decline reported {got} bytes, not the {len} asked for"
+                    );
+                    assert_eq!(named, floor, "{pattern:?}: decline named the wrong floor");
+                },
+                other => panic!(
+                    "{pattern:?} at {len} bytes must decline as unmodeled rather than \
+                     be priced, got {other:?}"
+                ),
+            }
+        }
+        // The floor itself is inclusive, and a caller who says they know better still
+        // gets a filter — an unmodeled length is a refusal to *promise*, not a refusal
+        // to build.
+        assert!(
+            !matches!(
+                Sieve::with(pattern, &at(floor, Gate::Worth)),
+                Err(BuildError::Unmodeled { .. })
+            ),
+            "{pattern:?}: the floor must be a length a verdict can be taken at"
+        );
+        assert!(
+            Sieve::with(pattern, &at(8.0, Gate::Ungated)).is_ok(),
+            "{pattern:?}: Gate::Ungated consults no price and must ignore the floor"
+        );
+    }
+    assert!(
+        judged > 0,
+        "no pattern armed at the nominal length, so no decline above could be \
+         attributed to the floor rather than to the price"
+    );
+}
+
 /// `skip.rs` states the rule in prose — "a rival already `memchr`-ing the identical
 /// byte cannot be beaten by a filter that has to find the same byte first" — and this
 /// is where it becomes enforced rather than believed.
