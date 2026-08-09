@@ -54,10 +54,10 @@ python3 infra/helper.py run_fuzzer sheng kernels -- -max_total_time=60
 ```
 
 `check_build` is the step that catches the failure this recipe is most exposed
-to: a target that builds and then rejects every input, which looks identical to a
-target finding nothing. `fuzz/fuzz_targets/skip.rs` was written wrong in exactly
-that way once — an eighteen-byte header is fine and a four-kilobyte one silently
-exceeded libFuzzer's default `-max_len`, so the body never ran.
+to: a target that builds and then rejects every input, which looks identical to
+a target finding nothing. `fuzz/fuzz_targets/skip.rs` was written wrong in
+exactly that way once — an eighteen-byte header is fine and a four-kilobyte one
+silently exceeded libFuzzer's default `-max_len`, so the body never ran.
 
 Reports go to the contact in `project.yaml`. There is deliberately no embargo
 argument to make: a soundness bug in a prefilter is a wrong answer rather than a

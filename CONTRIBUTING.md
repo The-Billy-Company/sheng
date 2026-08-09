@@ -103,12 +103,12 @@ and WASM SIMD128, which live one file per instruction set in `src/arch/`. New
    unrecoverable bug in this crate.
 
 A whole new kernel carries a fourth, and it is the one that surprises people: it
-will not run. `arch::kernel` returns the fastest kernel `price::MINTED` holds a row
-for, so a kernel with no row is inert by construction rather than by oversight -
-running it would price arming with some other kernel's nanoseconds. Dispatch wakes it
-only once somebody runs `.github/workflows/mint.yml` on that hardware and pastes the
-rows in. Until then `tests/kernels.rs`, the `kernels` fuzz target, and
-`shuffle::force` are what exercise it.
+will not run. `arch::kernel` returns the fastest kernel `price::MINTED` holds a
+row for, so a kernel with no row is inert by construction rather than by
+oversight - running it would price arming with some other kernel's nanoseconds.
+Dispatch wakes it only once somebody runs `.github/workflows/mint.yml` on that
+hardware and pastes the rows in. Until then `tests/kernels.rs`, the `kernels`
+fuzz target, and `shuffle::force` are what exercise it.
 
 And a fifth, which is what keeps the fourth from turning into a habit: add the
 kernel to `price::DORMANT` with the reason it is unpriced. That list is held to

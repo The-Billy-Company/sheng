@@ -3,5 +3,32 @@
   // (`wrap = false` in towncrier.toml) multi-paragraph prose folded verbatim
   // into CHANGELOG.md — they were never meant to stand alone as documents
   // and, by the format's own convention, never carry a heading.
-  "ignores": ["changelog.d/+*.md"]
+  //
+  // A GitHub pull-request template is the same kind of thing: a fragment
+  // rendered inside a form, which is why it opens at `##` rather than `#`.
+  //
+  // The five module READMEs are a **ratchet**, not a blessing. They were written
+  // to a ~90-column house style before `.githooks/pre-push` existed to assert
+  // 80, and the honest choices were to relax the rule for every document or to
+  // name the ones that predate it. Relaxing it would quietly drop a standard the
+  // root documents really do hold — `README.md`, `SECURITY.md` and
+  // `CONTRIBUTING.md` are wrapped at 80 and stay checked at 80. This list only
+  // shrinks: reflow a file, delete its line.
+  "ignores": [
+    "changelog.d/+*.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    "src/README.md",
+    "src/arch/README.md",
+    "src/price/README.md",
+    "examples/README.md",
+    "tests/README.md"
+  ],
+  "config": {
+    // A table row is as wide as its widest cell and there is no wrapping
+    // available inside one, so a width rule can only be satisfied by deleting
+    // the content. Same for a fenced block: a shell line is as long as the
+    // command is, and breaking it changes what it means. Both are structural
+    // rather than prose, which is what MD013 is a rule about.
+    "MD013": { "tables": false, "code_blocks": false }
+  }
 }
