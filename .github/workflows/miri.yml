@@ -22,16 +22,23 @@ jobs:
   #   `skip::tests` and from every integration test in `tests/`. These are checked
   #   instead by real silicon in `ci.yml`'s cross-architecture matrix, running the
   #   actual instructions rather than an interpreter's approximation of them.
-  # * `selectivity`'s byte-level cross-check and every DFA-building test
-  #   (`tests/policy.rs`, `tests/soundness.rs`, `selectivity::tests::grouping_*`).
-  #   `regex-automata` determinization is measurably expensive even natively (see
-  #   `src/selectivity.rs`'s own "~50 ms per Sieve::new" note) and Miri's
-  #   interpretation overhead turns that into whole minutes per call — a real cost
-  #   with no UB left to find along that path, since determinization touches no
-  #   `unsafe` this crate owns.
+  # * Every DFA-building test: `tests/policy.rs`, `tests/soundness.rs`, and all of
+  #   `selectivity::tests`, each of whose three cases goes through the module's own
+  #   `quotients` helper. `regex-automata` determinization is measurably expensive
+  #   even natively (see `src/selectivity.rs`'s own "~50 ms per Sieve::new" note) and
+  #   Miri's interpretation overhead turns that into whole minutes per call — a real
+  #   cost with no UB left to find along that path, since determinization touches no
+  #   `unsafe` this crate owns. The skip is written as the module rather than as three
+  #   names because naming them individually is what let two of the three back in: the
+  #   list said `grouping_*` while the comment above it said every DFA-building test,
+  #   and the run went from 87 seconds to hours without ever failing.
   miri:
     name: miri (portable paths)
     runs-on: ubuntu-latest
+    # Well over the ~90 seconds the portable set takes, and far under the 6 hours a
+    # job runs for by default. A Miri leg that grows a DFA build should be caught by
+    # something louder than a queue slot occupied all afternoon.
+    timeout-minutes: 20
     # `rust-toolchain.toml` pins 1.96.0 and rustup honors the file over whatever the
     # setup action made default, so without this `cargo miri` resolves to a stable
     # toolchain that has no miri component at all. The env override outranks the file.
@@ -59,4 +66,4 @@ jobs:
             --skip skip::tests::the_classifier_admits_exactly_the_set \
             --skip skip::tests::the_classifier_is_exact_on_sets_nobody_hand_picked \
             --skip skip::tests::an_escape_is_found_at_every_offset_of_every_length \
-            --skip selectivity::tests::grouping_the_bytes_by_class_computes_the_same_chain
+            --skip selectivity::tests::

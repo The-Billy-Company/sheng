@@ -96,7 +96,6 @@ jobs:
   fold-changelog:
     name: fold changelog
     needs: release-please
-    if: needs.release-please.outputs.pr != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -108,8 +107,33 @@ jobs:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
+          # Read-only, and only so the step below can find the open release PR when
+          # release-please did not report one.
+          permission-pull-requests: read
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Which branch to fold onto. release-please reports `pr` only from the run that
+      # creates or updates it, so a later push carrying nothing release-please acts on
+      # leaves that output empty while the PR is open and still unfolded — which is how
+      # a PR came to sit red on a lock this job exists to move. Fall back to asking for
+      # the open PR release-please labels `autorelease: pending`.
+      - id: pr
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          REPORTED: ${{ needs.release-please.outputs.pr }}
+        run: |
+          set -euo pipefail
+          if [ -n "$REPORTED" ]; then
+            branch=$(python3 -c 'import json,os; print(json.loads(os.environ["REPORTED"])["headBranchName"])')
+          else
+            branch=$(gh pr list --state open --base main --label 'autorelease: pending' \
+              --json headRefName --jq '.[0].headRefName // ""')
+          fi
+          printf 'branch=%s\n' "$branch" >>"$GITHUB_OUTPUT"
+          [ -n "$branch" ] || echo 'no open release PR: nothing to fold onto'
+
+      - if: steps.pr.outputs.branch != ''
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # The App token is used only by the explicit git push below, which carries it
           # in a one-off remote URL. Do not leave it behind in `.git/config` for a later
@@ -117,25 +141,28 @@ jobs:
           # with credentials unpersisted the input authenticates nothing, and reading it
           # as if it did is what left this job committing a fold it could not push.
           persist-credentials: false
-          ref: ${{ fromJson(needs.release-please.outputs.pr).headBranchName }}
+          ref: ${{ steps.pr.outputs.branch }}
 
-      - id: version
+      - if: steps.pr.outputs.branch != ''
+        id: version
         uses: The-Billy-Company/.github/actions/package-release@deb135f046122a10cabc861e96eb9941c2d09ddc # main
         with:
           command: version
           args: --root .
 
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - if: steps.pr.outputs.branch != ''
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: false
 
       - name: Fold changelog.d fragments into CHANGELOG.md at this PR's version
+        if: steps.pr.outputs.branch != ''
         env:
           # Read through the environment rather than interpolated into the script: the
           # token so it is never a substring of a command line, the branch because it is
           # PR-supplied text and this is a shell.
           RELEASE_TOKEN: ${{ steps.app-token.outputs.token }}
-          HEAD_BRANCH: ${{ fromJson(needs.release-please.outputs.pr).headBranchName }}
+          HEAD_BRANCH: ${{ steps.pr.outputs.branch }}
         run: |
           set -euo pipefail
           version=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])' \
