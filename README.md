@@ -200,11 +200,13 @@ dispatch chose, and that is what makes a new instruction set reachable at all:
 since dispatch declines a kernel with no row, a mint that followed dispatch would
 be waiting on the measurement the measurement was waiting on. Pasting a row in is
 what wakes a kernel, and it comes with a deletion — `price::DORMANT` names the
-same kernel and its reason, held to `price::MINTED` in both directions by a test,
-so a row landed there fails the build until the line here is gone. A kernel
-nobody has minted yet and a kernel whose row somebody dropped are otherwise the
-same absence, and the second one costs a machine its throughput while every test
-still passes.
+same machine and kernel and the reason, held to `price::MINTED` in both directions
+by a test, so a row landed there fails the build until the line here is gone. A
+kernel nobody has minted yet and a kernel whose row somebody dropped are otherwise
+the same absence, and the second one costs a machine its throughput while every
+test still passes. It is keyed on the machine because a fleet is not one:
+`linux`/`x86_64` covers runners with and without AVX-512, so that kernel is
+unpriced there and priced on `windows`/`x86_64`.
 
 ## Layout
 

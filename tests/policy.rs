@@ -346,12 +346,24 @@ fn a_document_shorter_than_anything_measured_gets_no_verdict() {
 /// blocks already in registers, so a genuinely cheaper excursion is a genuinely
 /// cheaper sieve and forbidding it would forbid a real win. What the coinciding sets
 /// actually do is *cancel the streaming halves of the two prices*, leaving the whole
-/// verdict resting on the ratio of two excursion coefficients — and that ratio is
-/// 3.5% against a published spread of 21%. So the rule is not a veto, it is the reason
-/// [`sheng::price::MARGIN`] has to exist, and the assertion is that the margin
-/// catches it.
+/// verdict resting on the ratio of two excursion coefficients.
 ///
-/// Both halves are checked. Asserting only the decline would pass just as well if the
+/// Which machine you ask therefore decides the answer, and the six-machine mint is what
+/// established that. This test used to assert the decline flatly, on one machine where
+/// those two coefficients came out 3.5% apart — comfortably inside
+/// [`MARGIN`](sheng::price::MARGIN), so the margin dismissed the difference and the
+/// pattern declined. Five of the six machines minted since read them 20–30% apart, which
+/// the margin cannot dismiss and should not: there the sieve's cheaper restart is a
+/// measurement, and `windows`/`aarch64` duly arms.
+///
+/// So the assertion is the conditional the flat one was a special case of: the pattern
+/// declines *unless* this machine's own excursion pair clears the margin, in which case
+/// arming is what the numbers say and the adjudicator is `examples/survey.rs`, which
+/// times it against real source rather than predicting it. What cannot happen — and is
+/// what this still catches — is arming while the two coefficients sit close enough
+/// together that only noise separates them.
+///
+/// All of it is checked. Asserting only the verdict would pass just as well if the
 /// pattern declined for some unrelated reason, which would leave the interesting claim
 /// — that these are the same search twice — untested.
 #[test]
@@ -381,7 +393,12 @@ fn a_skip_over_the_engine_s_own_accelerator_cannot_arm_on_the_excursion_ratio() 
             "{pattern:?}: the engine must accelerate, or there is no coincidence to test"
         );
 
+        let cal = sheng::price::active(AT);
         let core = sheng::Projection::of(&dfa).expect("projects");
+        // The instrument matters, so it is read off the harvested skip rather than assumed:
+        // the two restart at genuinely different prices, and taking the cheaper of whatever
+        // this pattern actually harvests keeps the bound below one-sided.
+        let mut restart = f64::INFINITY;
         for quotient in sheng::harvest(&core) {
             let skip = sheng::Skip::of(&quotient.rows, quotient.start).expect("a skip exists");
             assert_eq!(
@@ -389,13 +406,22 @@ fn a_skip_over_the_engine_s_own_accelerator_cannot_arm_on_the_excursion_ratio() 
                 &accelerator[..],
                 "{pattern:?}: this test only says something while the two sets coincide"
             );
+            restart = restart.min(cal.skip_excursion[skip.instrument() as usize][AT as usize]);
             checked += 1;
         }
 
+        // Whether this machine measured the sieve's restart cheaper than the engine's by
+        // more than the coefficients can be confused by. Exactly the comparison the gate is
+        // left holding once the streaming halves cancel.
+        let measurably_cheaper =
+            cal.dfa_excursion[AT as usize] > restart * (1.0 + sheng::price::MARGIN);
         let cost = Sieve::with(pattern, &Policy::new(AT)).map(|s| s.cost());
         assert!(
-            matches!(cost, Err(BuildError::NotWorthIt(_))),
-            "{pattern:?}: searching the engine's own accelerator set must not arm, got {cost:?}"
+            matches!(cost, Err(BuildError::NotWorthIt(_))) || measurably_cheaper,
+            "{pattern:?}: searching the engine's own accelerator set armed while its \
+             restart ({restart:.3}) is within the margin of the engine's ({:.3}), so only \
+             noise separates them, got {cost:?}",
+            cal.dfa_excursion[AT as usize]
         );
     }
     assert!(

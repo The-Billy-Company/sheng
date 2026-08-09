@@ -113,13 +113,17 @@ Dispatch wakes it only once somebody runs `.github/workflows/mint.yml` on that
 hardware and pastes the rows in. Until then `tests/kernels.rs`, the `kernels`
 fuzz target, and `shuffle::force` are what exercise it.
 
-And a fifth, which is what keeps the fourth from turning into a habit: add the
-kernel to `price::DORMANT` with the reason it is unpriced. That list is held to
-`price::MINTED` in both directions by a test, so leaving a kernel out fails the
-build and landing its row later fails the build until the line is deleted. An
-unminted kernel is a plan; the same kernel undeclared is indistinguishable
-from a row somebody dropped, which costs a machine its throughput while every
-test still passes.
+And a fifth, which is what keeps the fourth from turning into a habit: add a
+`price::Dormant` entry naming the machine, the kernel and the reason it is
+unpriced - `os` and `arch` may be `None` for "everywhere", but only if that is
+true. That list is held to `price::MINTED` in both directions by a test, so
+leaving a kernel out fails the build and landing its row later fails the build
+until the line is deleted. An unminted kernel is a plan; the same kernel
+undeclared is indistinguishable from a row somebody dropped, which costs a
+machine its throughput while every test still passes. The machine belongs in the
+key because a fleet is not a machine: `linux`/`x86_64` covers runners with and
+without AVX-512, so the same kernel is unpriced there and priced on
+`windows`/`x86_64`.
 
 ## Every Change Carries Its Own News
 

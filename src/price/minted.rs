@@ -380,8 +380,41 @@ pub const MINTED: &[Calibration] = &[
     WINDOWS_X86_64_SSSE3,
 ];
 
-/// Kernels this crate implements and some silicon can execute, that [`MINTED`] prices on
-/// no architecture — so [`crate::shuffle::kernel`] will not elect them anywhere.
+/// One kernel some silicon can execute that [`MINTED`] does not price *there*, and the
+/// reason it is waiting.
+///
+/// Keyed on the machine and not only the kernel, for the same reason [`Calibration`] is:
+/// one column short, it cannot express the state x86_64 is actually in. AVX-512 is priced
+/// on `windows`/x86_64 and unpriced on `linux`/x86_64 — not from neglect, but because
+/// GitHub's Linux fleet is *heterogeneous*, and the runner `mint.yml` drew had no AVX-512
+/// while the runner `ci.yml` drew an hour later did. A kernel-only list has to call that
+/// either priced (and then the Linux box that can run it is unaccounted for) or unpriced
+/// (and then the Windows row that prices it is a contradiction). Both are false.
+///
+/// So `os` and `arch` say which machines an entry speaks for, and [`None`] means every one
+/// of them.
+#[derive(Debug, Clone, Copy)]
+pub struct Dormant {
+    /// The operating system this speaks for, or [`None`] for all of them.
+    pub os: Option<&'static str>,
+    /// The architecture this speaks for, or [`None`] for all of them.
+    pub arch: Option<&'static str>,
+    /// The kernel left unpriced.
+    pub kernel: Kernel,
+    /// Why it is unpriced, in the words of whoever left it that way.
+    pub why: &'static str,
+}
+
+impl Dormant {
+    /// Whether this entry speaks for the named machine.
+    #[must_use]
+    pub fn covers(&self, os: &str, arch: &str) -> bool {
+        self.os.is_none_or(|it| it == os) && self.arch.is_none_or(|it| it == arch)
+    }
+}
+
+/// Kernels this crate implements and some silicon can execute, that [`MINTED`] does not
+/// price on that silicon — so [`crate::shuffle::kernel`] will not elect them there.
 ///
 /// Empty is the goal, not the invariant. A kernel is written and differentially tested
 /// long before anybody has an hour of the right silicon to price it on, and the
@@ -398,14 +431,33 @@ pub const MINTED: &[Calibration] = &[
 /// still correct. Naming the first is what makes the second visible.
 ///
 /// The test below holds this honest in both directions: a vector kernel this silicon can
-/// run must be either priced or named here, and a kernel named here must not turn out to
-/// be priced after all. So a mint that lands a row also has to delete its line.
-pub const DORMANT: &[(Kernel, &str)] = &[(
-    Kernel::Simd128,
-    "the only kernel here no `mint` leg can reach: a `wasm32` row's nanoseconds belong to \
-     the runtime and the host under it, so the leg that prices one has to name both, and \
-     `ci.yml` runs that target under `wasmtime` to prove the kernel rather than to time it",
-)];
+/// run must be either priced or named here, and an entry that covers this machine must not
+/// turn out to be priced on it after all. So a mint that lands a row also has to delete
+/// its line.
+pub const DORMANT: &[Dormant] = &[
+    Dormant {
+        os: None,
+        arch: None,
+        kernel: Kernel::Simd128,
+        why: "the one kernel no `mint` leg can reach: a `wasm32` row's nanoseconds belong \
+              to the runtime and the host under it, so the leg that prices one has to name \
+              both, and `ci.yml` runs that target under `wasmtime` to prove the kernel \
+              rather than to time it",
+    },
+    Dormant {
+        os: Some("linux"),
+        arch: Some("x86_64"),
+        kernel: Kernel::Avx512,
+        why: "the silicon, not the kernel: `mint.yml`'s `linux-x86_64` leg drew a runner \
+              whose `available()` came back `[Avx2, Ssse3, Scalar]`, so there was no \
+              AVX-512 to time. The fleet is not uniform — a `ci.yml` runner an hour later \
+              reported the rung present — and which member a workflow is handed is not \
+              something the workflow decides. `windows`/x86_64 got one that had it and is \
+              priced; re-dispatching this leg until Linux draws the same is the only way \
+              to fill it, and it would be elected only if it beat that machine's AVX2, \
+              which on the machine that has both it does not",
+    },
+];
 
 #[cfg(test)]
 mod tests {
@@ -508,26 +560,29 @@ mod tests {
                 .iter()
                 .filter(|cal| cal.os == crate::price::OS && cal.arch == crate::price::ARCH)
         };
+        let (os, arch) = (crate::price::OS, crate::price::ARCH);
         let priced = |kernel| mine().any(|cal| cal.kernel == kernel);
-        let declared = |kernel| DORMANT.iter().any(|&(dormant, _)| dormant == kernel);
+        let declared = |kernel| {
+            DORMANT
+                .iter()
+                .any(|it| it.kernel == kernel && it.covers(os, arch))
+        };
         if mine().next().is_some() {
             for &kernel in crate::shuffle::available() {
                 assert!(
                     !kernel.is_vector() || priced(kernel) || declared(kernel),
-                    "{} {} has rows but none for {kernel:?}, which its silicon can run — \
-                     mint one, or add it to DORMANT with the reason it is waiting",
-                    crate::price::OS,
-                    crate::price::ARCH
+                    "{os} {arch} has rows but none for {kernel:?}, which its silicon can \
+                     run — mint one, or add it to DORMANT with the reason it is waiting"
                 );
             }
         }
-        for &(kernel, why) in DORMANT {
+        for it in DORMANT.iter().filter(|it| it.covers(os, arch)) {
             assert!(
-                !priced(kernel),
-                "{kernel:?} is priced on {} {} but still listed DORMANT as {why:?} — a \
-                 row landing is what deletes that line",
-                crate::price::OS,
-                crate::price::ARCH
+                !priced(it.kernel),
+                "{:?} is priced on {os} {arch} but still listed DORMANT as {:?} — a row \
+                 landing is what deletes that line",
+                it.kernel,
+                it.why
             );
         }
     }
