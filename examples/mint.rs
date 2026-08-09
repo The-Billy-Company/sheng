@@ -261,9 +261,11 @@ fn persistence(docs: &[Vec<u8>], prior: &str) {
     println!("    next: [");
     for ((row, class), n) in next.iter().zip(Class::ALL).zip(support) {
         let cells: Vec<String> = row.iter().map(|p| format!("{p:.6}")).collect();
-        let thin = (n < SUPPORT)
-            .then(|| format!(" — {n} pairs is under the support floor: absorbing"))
-            .unwrap_or_default();
+        let thin = if n < SUPPORT {
+            format!(" — {n} pairs is under the support floor: absorbing")
+        } else {
+            String::new()
+        };
         println!("        [{}], // {class:?}{thin}", cells.join(", "));
     }
     println!("    ],");

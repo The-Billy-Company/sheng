@@ -199,9 +199,9 @@ impl Escape {
 
 /// The nibble classifier, one implementation per byte-shuffle instruction set.
 ///
-/// Structured so the two vector paths and the fallback share one entry point and
-/// one meaning: `find` returns the first offset whose byte is in the set, and the
-/// tests hold all three to the same answer on the same bytes. The vector bodies
+/// Structured so every vector path and the fallback share one entry point and one
+/// meaning: `find` returns the first offset whose byte is in the set, and the tests
+/// hold all of them to the same answer on the same bytes. The vector bodies
 /// themselves live in [`crate::arch`], one file per instruction set, alongside
 /// [`crate::shuffle`]'s composition kernel.
 pub(crate) mod wide {

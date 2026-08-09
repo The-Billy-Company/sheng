@@ -1,0 +1,155 @@
+name: Priors
+
+# Re-mint the non-source byte priors from their pinned corpora and fail if the shipped
+# tables do not come back identical.
+#
+# This runs on pushes where `mint.yml` cannot, and the difference is the whole reason
+# the two are separate workflows. A price row is nanoseconds measured on one machine
+# under one load, so it can only be *read* by a human and never checked; a prior is a
+# count. Given the same bytes it is the same 312 floats every time, on any runner, in
+# any month — every cell is a `u64` tally and one final division. So the constants in
+# `src/prior/minted.rs` do not have to be trusted, and here they are not: this job
+# re-derives them and diffs.
+#
+# What that buys, concretely, is that a prior cannot rot silently. Edit a cell by hand
+# to make a gate decision come out differently and this fails; change `Class::of` and
+# every table it invalidates fails at once, which is exactly the coupling that would
+# otherwise be discovered by a caller.
+#
+# `SOURCE` is not checked here. Its corpus is *this repository*, which changes on every
+# commit, so the honest treatment is the one it already has: a stamp naming the tree and
+# the day, re-minted deliberately. The three below are pinned to somebody else's commit
+# and therefore reproducible forever.
+on:
+  push:
+    branches: [main]
+    paths:
+      - src/prior/**
+      - examples/mint.rs
+      - examples/common.rs
+      - .github/workflows/priors.yml
+  pull_request:
+    paths:
+      - src/prior/**
+      - examples/mint.rs
+      - examples/common.rs
+      - .github/workflows/priors.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Safe to cancel, unlike the fuzz campaign: this is a re-derivation of a fixed function of
+# pinned bytes, so a superseded run has nothing to say that the run replacing it will not.
+concurrency:
+  group: priors-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  priors:
+    name: re-mint from pinned corpora
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # Machine-generated JSON: the corpus simdjson benchmarks its own parsers against,
+      # so it spans pretty-printed meshes, minified API dumps, GeoJSON and Twitter
+      # payloads rather than one shape of object.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: simdjson/simdjson-data
+          ref: 4197c425e857f0ec38e89822fdd0bd9ea21f4daf
+          persist-credentials: false
+          path: corpus/json
+
+      # Production logs from sixteen different emitters — Android, Apache, BGL, Hadoop,
+      # HDFS, HealthApp, HPC, Linux, Mac, OpenSSH, OpenStack, Proxifier, Spark,
+      # Thunderbird, Windows, Zookeeper. Sixteen real formatters is the only way a log
+      # prior is about logs rather than about one team's logger.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: logpai/loghub
+          ref: dd61d0952749ee7963bde24220d1be5ede023033
+          persist-credentials: false
+          path: corpus/log
+
+      # English literary prose: the eighteen Project Gutenberg books of NLTK's
+      # `gutenberg` corpus. Fetched as one pinned archive rather than checked out,
+      # because it lives on a `gh-pages` branch several gigabytes wide and this is
+      # 4 MiB of it. Pinned twice over — the URL names a commit, and the digest is
+      # checked before anything is unpacked, so a `curl` here is as pinned as a `ref:`
+      # above and says so in a form that does not depend on trusting the host.
+      - name: prose corpus
+        env:
+          # nltk/nltk_data, gh-pages @ 550b6625bcef1f2abff2ff770a5a0d272c9c6b2a
+          ZIP: https://raw.githubusercontent.com/nltk/nltk_data/550b6625bcef1f2abff2ff770a5a0d272c9c6b2a/packages/corpora/gutenberg.zip
+          SHA256: 2d3c3ab548c653944310f37f536443ec85d0a0ad855fcae217a0c9efdce2d611
+        run: |
+          set -euo pipefail
+          mkdir -p corpus/prose
+          curl -sSfL --retry 3 -o gutenberg.zip "$ZIP"
+          echo "$SHA256  gutenberg.zip" | sha256sum -c -
+          unzip -q -j gutenberg.zip '*.txt' -d corpus/prose
+          find corpus/prose -type f -name '*.txt' | wc -l
+
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+
+      # One mint per corpus, each pointed at its own tree *and* its own extensions —
+      # `$SHENG_KINDS` is not decoration, since a tree of `.txt` is invisible to the
+      # source-extension default however the root is aimed. Then the diff. A run that
+      # printed nothing would otherwise pass a comparison against nothing, so the check
+      # asserts the cell count it found before it compares any of them.
+      - name: re-mint and diff every pinned prior
+        run: |
+          set -euo pipefail
+          for leg in prose:txt json:json log:log; do
+            name="${leg%%:*}"
+            SHENG_CORPUS="$PWD/corpus/$name" SHENG_KINDS="${leg##*:}" \
+              cargo run --release --locked --example mint -- "$name" | tee "remint-$name.txt"
+          done
+          python3 - <<'PY'
+          import re
+
+          def floats(text, name, where):
+              got = re.search(rf"pub const {name}\b[^=]*=(.*?);\n", text, re.S)
+              if not got:
+                  raise SystemExit(f"{where}: no constant named {name}")
+              body = re.sub(r"//[^\n]*", "", got.group(1))
+              return [float(x) for x in re.findall(r"-?\d+\.\d+", body)]
+
+          shipped = open("src/prior/minted.rs", encoding="utf-8").read()
+          drifted = []
+          for prior in ("PROSE", "JSON", "LOG"):
+              fresh = open(f"remint-{prior.lower()}.txt", encoding="utf-8").read()
+              for name, cells in ((prior, 56), (f"{prior}_BYTES", 256)):
+                  was, now = floats(shipped, name, "shipped"), floats(fresh, name, "re-mint")
+                  if len(now) != cells:
+                      raise SystemExit(f"{name}: re-mint printed {len(now)} floats, not {cells}")
+                  bad = [(i, x, y) for i, (x, y) in enumerate(zip(was, now)) if x != y]
+                  print(f"{name}: {cells} cells, {len(bad)} drifted")
+                  drifted += [f"{name}[{i}] shipped {x} re-mints {y}" for i, x, y in bad[:4]]
+          if drifted:
+              raise SystemExit(
+                  "a prior no longer reproduces from the corpus it names:\n  "
+                  + "\n  ".join(drifted)
+                  + "\n\nPaste the re-minted constants into src/prior/minted.rs, or say in "
+                    "the doc comment which corpus actually produced the shipped ones."
+              )
+          print("every pinned prior reproduced exactly")
+          PY
+
+      # Kept whether or not the diff held: when it fails, the numbers to paste are the
+      # thing the reader needs, and re-running the workflow to get them is a round trip
+      # for an artifact the run already produced.
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: remint
+          path: remint-*.txt

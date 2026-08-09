@@ -70,9 +70,13 @@ rather than bounce you.
   slice's running max at the lane the real trajectory entered on. Reading a
   different lane under-reports an accept, and under-reporting an accept is the
   unsound direction.
-- **Memory unsafety in the vector paths.** `shuffle.rs` and `skip.rs` are
-  hand-written NEON and SSSE3 behind `unsafe`. A lane index, a length, or an
-  alignment that can be driven out of bounds by haystack content is in scope.
+- **Memory unsafety in the vector paths.** `arch/{neon,ssse3,avx2}.rs` are
+  hand-written intrinsics behind `unsafe`, dispatched into by `shuffle.rs` and
+  `skip.rs`. A lane index, a length, or an alignment that can be driven out of
+  bounds by haystack content is in scope. AVX2 additionally rests on a runtime
+  probe of the *operating system* as well as the silicon — the `OSXSAVE` bit and
+  `XCR0`'s promise about the upper half of `ymm` — so a machine on which that
+  probe admits a kernel the OS will not preserve state for is in scope too.
 - **Unbounded work from a pattern.** A pattern is compiled into a DFA before it
   is quotiented. Input that makes construction consume memory or time out of
   proportion to its size is in scope, though see below for what is not.
@@ -103,14 +107,27 @@ kind of report we want:
   property of the construction and exists the moment a quotient does;
 - dispatch reports the kernel it chose, so a vector-versus-scalar differential
   cannot pass by quietly having tested the scalar path twice;
-- both vector paths are exercised on real silicon - NEON on arm64, SSSE3 on
-  x86_64 - against 30 000 mutated haystacks each;
+- every vector path is exercised on real silicon - NEON on arm64, AVX2 and SSSE3
+  on x86_64 - against 30 000 mutated haystacks each, natively on all six
+  Windows/Linux/macOS × x86_64/arm64 targets `.github/workflows/native.yml`
+  covers, never under emulation;
+- a kernel dispatch would not have chosen is still differentiated, because
+  `arch::kernel` returns the fastest kernel `price::MINTED` holds a row for and
+  the newest instruction set is therefore the last one it reaches -
+  `tests/kernels.rs` and the `kernels` fuzz target both sweep
+  `shuffle::available()` through the `shuffle::force` seam instead;
 - the set classifier is differentiated against a scalar statement of the same
   membership over every byte value, 2048 pseudo-random sets, and a planted
   escape at every offset of every length from 1 to 72;
 - the skip differential asserts a skip lane was actually chosen before it
   compares, and draws haystacks from a narrow alphabet, because uniformly random
-  bytes never let a skip loop reach its tail.
+  bytes never let a skip loop reach its tail;
+- three `cargo-fuzz` targets carry the same properties under a real search
+  budget - 90 seconds each on every push, and a monthly campaign of two hours
+  each whose corpus is carried forward from the previous one. `fuzz/skip.rs`
+  takes its oracle from the transition rows rather than from `find_scalar`,
+  because both searchers read the tables `Skip::of` built and would agree
+  exactly if the encoding were wrong. `fuzz/README.md` says what each holds.
 
 ## Provenance
 

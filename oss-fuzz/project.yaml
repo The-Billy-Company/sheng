@@ -1,0 +1,28 @@
+# OSS-Fuzz project definition for `sheng`.
+#
+# This file is not read from this repository. OSS-Fuzz builds from its own tree, so
+# integration means copying this directory to `projects/sheng/` in a fork of
+# google/oss-fuzz and opening a pull request there. It is versioned here so the build
+# recipe travels with the code it builds — a `build.sh` that lives only in somebody
+# else's repository is a build nobody here can fix when a target gets renamed.
+#
+# See `oss-fuzz/README.md` for the submission steps and what has to be true first.
+homepage: "https://github.com/The-Billy-Company/sheng"
+main_repo: "https://github.com/The-Billy-Company/sheng"
+language: rust
+primary_contact: "security@billylives.com"
+
+# Rust targets build under AddressSanitizer only — OSS-Fuzz does not offer the others
+# for this language — and libFuzzer is the engine `cargo-fuzz` emits.
+sanitizers:
+  - address
+fuzzing_engines:
+  - libfuzzer
+
+# x86_64 is the architecture that needs the coverage, and not only because it is the
+# default. arm64 has one kernel and it is baseline, so `tests/kernels.rs` reaches all of
+# it on any Mac; x86_64 has three — `Avx2`, `Ssse3`, `Scalar` — and two of them are
+# reachable only through `shuffle::force`, which is exactly what the `kernels` target
+# sweeps.
+architectures:
+  - x86_64

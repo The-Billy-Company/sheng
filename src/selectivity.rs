@@ -344,6 +344,44 @@ mod tests {
         );
     }
 
+    /// The property that makes the shipped prior set safe to *grow*: sweeping more
+    /// corpora can only raise the fallthrough estimate, so it can only tighten the
+    /// gate, never arm something that was declining.
+    ///
+    /// Worth pinning rather than reading off the `fold`, because it is what the whole
+    /// [`prior::DEFAULT_CHAINS`] design rests on. It is why a prior minted over a
+    /// corpus the mint could not fully measure — a row absorbed at the support floor,
+    /// a corpus with no non-ASCII byte in it — is still safe to ship in the default
+    /// set: the worst case over four corpora is at least the worst case over any one
+    /// of them, so a thin row can cost breadth and cannot cost soundness.
+    #[test]
+    fn sweeping_more_priors_never_lowers_the_fallthrough_it_reports() {
+        let mut compared = 0usize;
+        for pattern in [
+            r"(?-u)WalletService",
+            r"(?-u)[0-9]{3}-[0-9]{4}",
+            r"(?-u)<[^>]*>",
+        ] {
+            let qs = quotients(pattern);
+            for take in 1..=prior::DEFAULT_CHAINS.len() {
+                let (narrow, wide) = (
+                    worst_case(&qs, &prior::DEFAULT_CHAINS[..take - 1]),
+                    worst_case(&qs, &prior::DEFAULT_CHAINS[..take]),
+                );
+                assert!(
+                    wide >= narrow,
+                    "{pattern:?}: {take} chains report {wide:e} against {narrow:e} for {}",
+                    take - 1
+                );
+                compared += 1;
+            }
+        }
+        assert!(
+            compared >= 12,
+            "only {compared} comparisons — nothing harvested"
+        );
+    }
+
     /// Every class's mass has to land somewhere. A span that does not sum to 1 is a
     /// byte value the grouping dropped, which would under-count the fallthrough of
     /// every block it can reach.

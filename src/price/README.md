@@ -8,7 +8,7 @@ and re-decide never touch each other's file.
 | ----------------- | ------------------------------------------------------------------------ |
 | `gate.rs`         | the worth-test arithmetic itself: `survival`, `CostFact`, `NOMINAL_LEN` — pure, no measured numbers |
 | `calibration.rs`  | the `Calibration` shape and its per-byte pricing methods, plus `active()` |
-| `minted.rs`       | nothing but the measured rows: `MACOS_AARCH64`, `LINUX_X86_64`, `UNMEASURED`, `MINTED` |
+| `minted.rs`       | nothing but the measured rows: `MACOS_AARCH64_NEON`, `LINUX_X86_64_SSSE3`, `UNMEASURED`, `MINTED` |
 
 `mod.rs` carries the module's own doc (the scale-invariance argument, why nanoseconds
 rather than cycles) and re-exports every public name from all three files, so

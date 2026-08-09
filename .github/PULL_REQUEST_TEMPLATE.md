@@ -15,8 +15,13 @@ Fill in whatever applies, delete what doesn't: -->
       comment that argues the actual precondition, not just states one.
 - [ ] Changed selectivity/pricing constants: re-minted via `examples/mint.rs`
       on real hardware, not hand-edited (see `src/price/README.md`).
-- [ ] Added or changed a soundness-relevant path: ran the `soundness` fuzz
-      target locally (`cargo +nightly fuzz run soundness -- -max_total_time=60`).
+- [ ] Changed a byte prior: re-minted from the corpus its doc comment names, not
+      hand-edited — `priors.yml` re-derives the pinned three and fails on a
+      drifted cell (see `src/prior/minted.rs`).
+- [ ] Added or changed a soundness-relevant path: ran the fuzz target that
+      covers it locally (`cd fuzz && ./seeds.sh && cargo +nightly fuzz run
+      {soundness,skip,kernels} -- -max_total_time=90`); see `fuzz/README.md` for
+      which target holds which property.
 - [ ] Added a `towncrier` changelog fragment under `changelog.d/` if this is
       user-visible.
 

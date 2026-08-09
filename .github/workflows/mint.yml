@@ -1,0 +1,171 @@
+name: Mint
+
+# Manual only, and that is not timidity about cost — a mint is a *measurement*, and a
+# measurement that reruns itself on every push is a number nobody chose to take. It
+# prints rows; a human reads them, decides whether they are trustworthy, and pastes
+# them into `src/price/minted.rs`. Nothing here writes to the repository, because a
+# calibration that could land without somebody looking at its spread is exactly the
+# provenance this crate spends `src/price/minted.rs` refusing to lose.
+#
+# Run it when:
+#   * a new kernel exists in `src/arch/` and `price::MINTED` has no row for it — until
+#     then `arch::kernel` will not dispatch to it, so the kernel is inert and this
+#     workflow is the only thing that can wake it;
+#   * `src/shuffle.rs` or `src/skip.rs` changed what the sieve executes, which
+#     invalidates every `sieve` and `skip_excursion` coefficient at once;
+#   * an (architecture, kernel) pair this crate dispatches to has no row, which today
+#     means x86_64's `Avx2` and its scalar fallback.
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: >-
+          Which hardware to mint on. `x86_64` is the pair that needs it — arm64's NEON
+          row is minted and its scalar kernel is unreachable, since NEON is baseline
+          there and always priced.
+        type: choice
+        default: x86_64
+        options: [x86_64, arm64, all]
+
+permissions:
+  contents: read
+
+# Present but deliberately not cancelling: everywhere else in this repository a superseded
+# run has nothing to say, and here it does. A mint is an hour of a specific runner's real
+# silicon, and half of one is not half a measurement — it is a number with no spread, which
+# is the one thing `src/price/minted.rs` exists to refuse.
+concurrency:
+  group: mint-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The `legs` choice has to be resolved into a matrix *before* the matrix exists, which
+  # is why this job is here rather than an `if:` on `mint`. A job-level `if:` is evaluated
+  # before the matrix expands, so `matrix.arch` reads as empty there and every leg is
+  # filtered out — the default `x86_64` dispatch would run nothing at all and look like a
+  # workflow with no work to do.
+  plan:
+    name: legs
+    runs-on: ubuntu-latest
+    outputs:
+      legs: ${{ steps.pick.outputs.legs }}
+    steps:
+      - id: pick
+        env:
+          LEGS: ${{ inputs.legs }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee -a "$GITHUB_OUTPUT"
+          import json, os
+          legs = [
+              {"os": "ubuntu-24.04",     "label": "linux-x86_64", "arch": "x86_64"},
+              {"os": "macos-15-intel",   "label": "macos-x86_64", "arch": "x86_64"},
+              {"os": "ubuntu-24.04-arm", "label": "linux-arm64",  "arch": "arm64"},
+              {"os": "macos-15",         "label": "macos-arm64",  "arch": "arm64"},
+          ]
+          want = os.environ["LEGS"]
+          if want != "all":
+              legs = [leg for leg in legs if leg["arch"] == want]
+          assert legs, f"no leg matches {want!r}"
+          print("legs=" + json.dumps(legs))
+          PY
+
+  mint:
+    name: ${{ matrix.label }}
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.legs) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Nothing here pushes with the checkout credential, and leaving it in
+          # .git/config is how it ends up inside an uploaded artifact.
+          persist-credentials: false
+
+      # The same four pinned trees `native.yml` surveys against, and pinned for the same
+      # reason: a coefficient is only comparable across legs and across runs if every
+      # leg read the same bytes, and `main` is not a set of bytes.
+      #
+      # Corpus size is load-bearing here in a way it is not for a prior. A price row is
+      # nanoseconds per byte read from *memory*; a corpus small enough to sit in L3
+      # measures cache bandwidth and would understate every walk in the row while
+      # leaving the ratios that the gate actually reads quietly wrong. The floor below
+      # is what refuses to print a row measured against cache.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: The-Billy-Company/irregex
+          ref: f24276fb72baf13f50e867d26d052bdcfa8579e3
+          persist-credentials: false
+          path: corpus/irregex
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: The-Billy-Company/gist
+          ref: 3a56b5d62c561175f93693b0de4a471b358f1dc8
+          persist-credentials: false
+          path: corpus/gist
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: The-Billy-Company/relate
+          ref: 4c61e3c8c902beeb2db027e1ef51787ac7e49c5c
+          persist-credentials: false
+          path: corpus/relate
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: The-Billy-Company/blast
+          ref: ab6951c4e733701b00821037f4336183dccf2cf3
+          persist-credentials: false
+          path: corpus/blast
+
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+      # Deliberately uncached. A restored cache is writable by any branch that can run a
+      # workflow, and a measurement is the one artifact where reading somebody else's
+      # bytes would be indistinguishable from reading your own.
+
+      # Proof the mint reached the kernels this leg is here for, printed before the
+      # long run rather than inferred from its output. A leg whose probe found only
+      # `Scalar` has nothing to say about `vpshufb` and should be read as a failure of
+      # the runner, not as evidence about the instruction set.
+      - name: which kernels this runner actually has
+        run: cargo test --release --all-features --locked --test kernels -- --nocapture
+
+      - name: mint every kernel this machine can run
+        env:
+          SHENG_CORPUS: ${{ github.workspace }}/corpus
+          LABEL: ${{ matrix.label }}
+        run: cargo run --release --example mint | tee "mint-$LABEL.txt"
+
+      # `mint` prints its own corpus size in the banner; this is what makes that number
+      # a gate instead of a comment. 8 MiB is `examples/survey.rs`'s own floor, for the
+      # identical reason.
+      - name: refuse a row measured against cache
+        env:
+          LABEL: ${{ matrix.label }}
+        run: |
+          set -euo pipefail
+          python3 - "mint-$LABEL.txt" <<'PY'
+          import re, sys
+          banner = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+          got = re.search(r"([\d.]+) MiB from ", banner)
+          if not got:
+              raise SystemExit("mint printed no corpus banner — nothing was measured")
+          mib = float(got.group(1))
+          if mib < 8.0:
+              raise SystemExit(
+                  f"corpus is {mib} MiB, under the 8 MiB a per-byte price needs to be "
+                  "about memory rather than cache — these rows are not publishable"
+              )
+          print(f"corpus {mib} MiB: above the floor")
+          PY
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mint-${{ matrix.label }}
+          path: mint-${{ matrix.label }}.txt

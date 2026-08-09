@@ -41,9 +41,7 @@
 
 mod minted;
 
-pub use minted::{
-    JSON, JSON_BYTES, LOG, LOG_BYTES, PROSE, PROSE_BYTES, SOURCE, SOURCE_BYTES,
-};
+pub use minted::{JSON, JSON_BYTES, LOG, LOG_BYTES, PROSE, PROSE_BYTES, SOURCE, SOURCE_BYTES};
 
 /// Byte classes coarse enough that a 7x7 matrix over a real corpus has dense
 /// support, and fine enough that the runs patterns actually require — digits,
@@ -387,7 +385,10 @@ mod tests {
                     chain.start, rival.start,
                     "{name} and {other} carry one corpus between them"
                 );
-                assert_ne!(freq, rival_freq, "{name}_BYTES and {other}_BYTES are one table");
+                assert_ne!(
+                    freq, rival_freq,
+                    "{name}_BYTES and {other}_BYTES are one table"
+                );
             }
         }
     }

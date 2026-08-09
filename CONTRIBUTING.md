@@ -89,8 +89,9 @@ moved.
 
 ## Unsafe Code
 
-`shuffle.rs` and `skip.rs` are hand-written NEON and SSSE3. New `unsafe` is
-accepted, and it carries three obligations in the same PR:
+`shuffle.rs` and `skip.rs` dispatch into hand-written NEON, AVX2 and SSSE3, which
+live one file per instruction set in `src/arch/`. New `unsafe` is accepted, and it
+carries three obligations in the same PR:
 
 1. **A scalar reference** stating the same thing in safe Rust, which the tests
    compare against rather than reimplementing the vector logic.
@@ -100,6 +101,14 @@ accepted, and it carries three obligations in the same PR:
 3. **A refusal path** - if the fast path cannot represent an input exactly it
    returns `None` and the caller falls back. Approximating is the one
    unrecoverable bug in this crate.
+
+A whole new kernel carries a fourth, and it is the one that surprises people: it
+will not run. `arch::kernel` returns the fastest kernel `price::MINTED` holds a row
+for, so a kernel with no row is inert by construction rather than by oversight -
+running it would price arming with some other kernel's nanoseconds. Dispatch wakes it
+only once somebody runs `.github/workflows/mint.yml` on that hardware and pastes the
+rows in. Until then `tests/kernels.rs`, the `kernels` fuzz target, and
+`shuffle::force` are what exercise it.
 
 ## Every Change Carries Its Own News
 

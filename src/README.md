@@ -15,9 +15,9 @@ The pipeline runs in one direction, each stage narrowing what the next can consi
 | `projection.rs`  | a `dense::DFA` becomes reachable core states + the exact byte partition       |
 | `lattice.rs`     | the SP-partition closure over that core, and which quotients to conjoin       |
 | `shuffle.rs`     | the register kernel that runs a quotient: dispatch, composition, scalar reference |
-| `arch/`          | the unsafe NEON and SSSE3 intrinsics `shuffle.rs` and `skip.rs` dispatch into |
+| `arch/`          | the unsafe NEON, AVX2 and SSSE3 intrinsics `shuffle.rs` and `skip.rs` dispatch into |
 | `skip.rs`        | finding the next byte that leaves the start block, exactly rather than nearly |
-| `prior.rs`       | what a byte is likely to be, given the byte before it                         |
+| `prior/`         | what a byte is likely to be, given the byte before it                         |
 | `selectivity.rs` | the joint (block, class) chain that predicts how often a quotient accepts     |
 | `price/`         | what each kernel costs, and the inequality that decides arming                |
 
@@ -36,9 +36,18 @@ statement of its own set membership (`find_scalar`) that the SIMD path is differ
 against, because it is the only stage where being fast and being wrong look identical
 from the outside: a skip that steps over a real escape byte silently loses a match.
 
-`prior.rs` and `price/` are the two that carry **measured constants**, each stamped
-with the machine and date that produced it. Re-mint both with
+`prior/` and `price/` are the two that carry **measured constants**, each stamped with
+the machine or corpus and the date that produced it. Re-mint both with
 `cargo run --release --example mint`; never hand-edit a coefficient.
+
+They are stamped for different reasons, and the asymmetry is worth knowing. A price row
+is nanoseconds on one machine under one load, so it can only be read by a human and never
+checked — which is what `mint.yml` is, a manual workflow that prints rows for somebody to
+judge. A prior is a *count*: given the same bytes it is the same floats on any runner in
+any month. So `prior/minted.rs` ships four corpora minted from trees pinned by commit,
+and `priors.yml` re-derives three of them on every relevant push and fails on a drifted
+cell. `SOURCE`'s corpus is this repository, which is why it is the one that stays stamped
+rather than checked.
 
 Because those two are the only empirical stages, they are also the only ones a caller can
 be wrong about — so `Policy` in `lib.rs` exposes exactly them: the calibration, the chains,
@@ -53,7 +62,10 @@ against the scalar one instead of the scalar path against itself.
 is pure arithmetic with no measured numbers in it, `calibration.rs` is the `Calibration`
 shape and its per-byte methods, and `minted.rs` is nothing but the measured rows — so
 re-minting a machine touches one file, and the worth-test inequality can be read (and
-tested) with no numbers in view at all. `arch/` is the same split applied to the two SIMD
+tested) with no numbers in view at all. `prior/` is that same split with two files rather
+than three: `mod.rs` is the model — seven classes, a 7x7 chain, why a memoryless one
+misprices a run — and `minted.rs` is nothing but the four corpora it measured. `arch/` is
+the same split applied to the two SIMD
 kernels: `shuffle.rs` and `skip.rs` hold the portable dispatch and scalar fallbacks, while
 every `unsafe` NEON/SSSE3 intrinsic lives behind `arch::neon`/`arch::ssse3`, each gated
 to compile only on its own target architecture.

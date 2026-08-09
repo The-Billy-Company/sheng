@@ -4,27 +4,54 @@ on:
   push:
     branches: [main]
   pull_request:
+  # A campaign is the point and a smoke is only the tripwire. Every target's entire
+  # reason to exist is one soundness property, and a soundness property is not the kind
+  # of thing three minutes of coverage-guided search establishes — libFuzzer spends the
+  # first seconds of any run rediscovering the shapes it already knew, so a budget that
+  # short measures how fast the corpus loads more than it explores anything.
+  #
+  # Monthly, on the first, which is the most this repository schedules anything. That
+  # makes each run's budget carry a twelfth of the year rather than a 365th of it, so the
+  # default below is hours per target rather than minutes — and it is why the corpus is
+  # carried in an artifact instead of a cache. See the `campaign` job.
+  schedule:
+    - cron: "17 6 1 * *"
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: Per-target budget for a manual campaign.
+        type: number
+        default: 30
 
 permissions:
   contents: read
 
+# Cancelling stale PR runs is right; cancelling a monthly campaign because a push landed
+# is throwing away the only long search this repository gets, and the next one is four
+# weeks out.
 concurrency:
-  group: fuzz-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: fuzz-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # `rust-toolchain.toml` pins a stable release and rustup honors the file over whatever
+  # the setup action made default, so without this every `cargo` below runs on stable and
+  # `cargo fuzz` dies on `-Zsanitizer`. The env override outranks the file.
+  RUSTUP_TOOLCHAIN: nightly
 
 jobs:
-  # A bounded smoke, not a campaign: three minutes is enough to catch a soundness
-  # regression that a fixed differential sweep could miss, without turning every PR
-  # into a fuzzing run. `fuzz/README.md` has the unbounded invocation for when a
-  # change actually warrants one.
+  # Bounded, per target, on every push — enough to catch a regression a fixed
+  # differential sweep would miss, without turning a PR into a fuzzing run. The three
+  # targets run as a matrix, so the wall clock is one target's budget rather than three.
   smoke:
-    name: fuzz smoke (soundness, 180s)
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    name: smoke ${{ matrix.target }} (90s)
     runs-on: ubuntu-latest
-    # `rust-toolchain.toml` pins 1.96.0 and rustup honors the file over whatever the
-    # setup action made default, so without this every `cargo` below runs on stable and
-    # `cargo fuzz` dies on `-Zsanitizer`. The env override outranks the file.
-    env:
-      RUSTUP_TOOLCHAIN: nightly
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [soundness, skip, kernels]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -38,10 +65,133 @@ jobs:
         with:
           workspaces: fuzz -> target
       - run: cargo install cargo-fuzz --locked
-      - run: cargo fuzz run soundness -- -max_total_time=180
+      # A runner's `corpus/` is empty, and ninety seconds is short enough that the shape
+      # of the input matters more than the search. Seeded from this tree's own source
+      # text, which is bytes the sieve exists to filter.
+      #
+      # Through `env:` rather than interpolated into the script, here and below. A matrix
+      # leg is workflow-authored and cannot carry an injection today, but the property
+      # that makes that true is not local to the line that relies on it.
+      - env:
+          TARGET: ${{ matrix.target }}
+        run: ./seeds.sh "$TARGET"
+        working-directory: fuzz
+      - env:
+          TARGET: ${{ matrix.target }}
+        run: cargo fuzz run "$TARGET" -- -max_total_time=90
       - if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: fuzz-crash-soundness
-          path: fuzz/artifacts/soundness/
+          name: fuzz-crash-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore
+
+  # The campaign. Two things make this different in kind from the smoke rather than just
+  # longer: the budget, and the fact that the corpus survives between runs — so run N
+  # starts from everything runs 1..N-1 found interesting instead of from an empty
+  # directory. Without that a schedule is the same first minutes of search, repeated
+  # twelve times a year.
+  #
+  # Which is why the corpus is carried in an **artifact and not a cache**. A cache entry
+  # is evicted after seven days without a read, and the gap between two monthly runs is
+  # four weeks — so a cached corpus would be reliably gone by the time the next campaign
+  # looked for it, and the accumulation would be a comment rather than a fact. Artifact
+  # retention is set below to outlast the gap deliberately.
+  #
+  # The restored corpus is writable by anything that can run this workflow, which for a
+  # *measurement* would be disqualifying (see `mint.yml`, which is deliberately
+  # uncached). Here it is not: a poisoned corpus can cost coverage and cannot cost
+  # correctness, because every input is judged against an oracle compiled into the target
+  # and nothing about a verdict is read from the corpus.
+  campaign:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: campaign ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      actions: read # list this workflow's own past runs, to find the corpus to inherit
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [soundness, skip, kernels]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: fuzz -> target
+      - run: cargo install cargo-fuzz --locked
+
+      # The run to inherit from, asked for by id rather than by "latest", because
+      # `download-artifact` needs one and the alternative is trusting a CLI default about
+      # which run "latest" means. Only successful scheduled runs count: a campaign that
+      # crashed left a corpus that stops at the crash, and a manual 5-minute dispatch
+      # left one worse than the month before it.
+      - id: previous
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/fuzz.yml/runs" \
+            -f event=schedule -f status=success -f per_page=1 \
+            --jq '"run-id=" + (((.workflow_runs // [])[0].id // "") | tostring)' \
+            | tee -a "$GITHUB_OUTPUT"
+
+      # Best effort by design, both here and above: the first campaign has no
+      # predecessor, and a run that cannot find last month's corpus should search from
+      # the seeds rather than fail.
+      - if: steps.previous.outputs.run-id != ''
+        continue-on-error: true
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: fuzz-corpus-${{ matrix.target }}
+          path: fuzz/corpus/${{ matrix.target }}
+          run-id: ${{ steps.previous.outputs.run-id }}
+          github-token: ${{ github.token }}
+
+      # Real bytes from this tree, so the search does not spend its first minutes
+      # discovering that a haystack wants to be text. Only ever adds, so whatever the
+      # download recovered is joined rather than replaced.
+      - env:
+          TARGET: ${{ matrix.target }}
+        run: ./seeds.sh "$TARGET"
+        working-directory: fuzz
+
+      # `inputs.minutes` is null on a schedule, so the fallback is what the cron runs on
+      # — hours rather than minutes, because there are twelve of these a year.
+      - name: campaign
+        env:
+          MINUTES: ${{ inputs.minutes || 120 }}
+          TARGET: ${{ matrix.target }}
+        run: cargo fuzz run "$TARGET" -- -max_total_time=$((MINUTES * 60))
+
+      # Minimized *after* the run rather than before, so the search spends its budget on
+      # search and the shrink pays off in next month's startup instead of this one's.
+      - if: always()
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo fuzz cmin "$TARGET"
+
+      # Two artifacts rather than one, because they have different jobs. The corpus is the
+      # input to the next campaign and is named so the download step above can find it;
+      # the crash is for a human, today.
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-corpus-${{ matrix.target }}
+          path: fuzz/corpus/${{ matrix.target }}/
+          # Comfortably longer than the month until the next run, so one skipped or
+          # failed campaign does not lose the accumulated corpus.
+          retention-days: 90
+          if-no-files-found: ignore
+      - if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-crash-campaign-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/
           if-no-files-found: ignore

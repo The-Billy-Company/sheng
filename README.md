@@ -73,7 +73,7 @@ Six targets, x86_64 and arm64, all equally first-class: Linux (`ubuntu-24.04`,
 (`windows-2025`, `windows-11-arm`).
 
 `src/arch/` dispatches on `target_arch` alone, never the OS: one NEON kernel and
-one runtime-probed SSSE3 kernel behind all six.
+two runtime-probed x86_64 kernels — AVX2, SSSE3 — behind all six.
 [`.github/workflows/native.yml`](.github/workflows/native.yml) runs every cell
 on real, never-emulated silicon on every push, and re-checks the economic gate
 against real source text.
@@ -163,10 +163,11 @@ exposes their measured types for override.
 - **`lib.rs`** — `Sieve`, the arming decision, `Policy`.
 - **`projection.rs`** — reachable core states, the byte-class partition.
 - **`lattice.rs`** — the SP-partition closure, which quotients to conjoin.
-- **`shuffle.rs`** — the register kernel: NEON, SSSE3, scalar reference.
+- **`shuffle.rs`** — the register kernel, over `arch/`'s NEON, AVX2, SSSE3 and
+  a scalar reference.
 - **`skip.rs`** — the next byte that leaves the start block, exactly.
 - **`selectivity.rs`** — the joint (block, class) chain that predicts `f`.
-- **`prior.rs`** — what a byte is likely to be, given the byte before it.
+- **`prior/`** — what a byte is likely to be, given the byte before it.
 - **`price/`** — what each kernel costs, and the inequality that decides.
 
 ## Development
@@ -383,9 +384,26 @@ keyed deliberately without `os` — Windows shares both rows above, since nothin
 upstream varies by it. Anything unmeasured declines, naming the missing
 measurement.
 
-The corpus is the real limit: shipped priors describe a polyglot source tree,
-and prose or minified JS are different byte processes.
-[Calibration](#calibration) overrides it; nothing here is hardcoded.
+Four corpora are minted rather than one, because a byte prior is a claim about a
+corpus and shipping only source text priced everyone else's bytes under a model
+of our Rust. They disagree at the coarsest level — indentation makes a space the
+likeliest thing to follow a space in a code tree, and in prose it is the least
+likely — so the default sweeps all four and takes the worst, and a caller who
+knows they are searching logs narrows to `Prior::Log` for a better-informed and
+looser decision:
+
+| prior | corpus | the shape that makes it different |
+| ------------- | -------------------------------------- | -------------------------------------------- |
+| `Prior::Source` | this tree, 64.1 MiB, 9 languages | `Digit` repeats 20.8x its marginal share |
+| `Prior::Prose` | 18 Gutenberg books, 11.2 MiB | `Space` is *anti*-persistent, 0.2x |
+| `Prior::Json` | `simdjson-data`, 26.9 MiB | nothing is rare; 4 of 7 classes above 0.67 |
+| `Prior::Log` | `loghub`, 16 systems, 4.3 MiB | `Punct` alternates rather than clusters, 0.5x |
+
+Adding a corpus can only tighten the gate, which is what makes the set safe to
+grow and safe to ship a thinly-sampled row in. A byte process none of them
+describes — minified JS, DNA, a wire protocol — mints its own:
+`cargo run --release --example mint -- mine`. [Calibration](#calibration)
+overrides all of it; nothing here is hardcoded.
 
 ## Prior Art
 
