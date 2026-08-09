@@ -3,6 +3,7 @@
 //! [`super::minted`].
 
 use super::minted::{MINTED, UNMEASURED};
+use crate::arch::ARCH;
 use crate::lattice::MAX_CONJUNCTS;
 use crate::shuffle::{self, Kernel};
 use crate::skip::Skip;
@@ -11,8 +12,8 @@ use crate::skip::Skip;
 /// coefficient can be re-minted without re-deriving any other.
 #[derive(Debug, Clone, Copy)]
 pub struct Calibration {
-    /// The instruction set these ratios describe, spelled as `std::env::consts::ARCH`
-    /// so [`active`] can match it against the running target.
+    /// The instruction set these ratios describe, spelled as [`ARCH`] spells it so
+    /// [`active`] can match it against the running target.
     pub arch: &'static str,
     /// The kernel the `sieve` coefficients were timed with. A number measured through
     /// a byte shuffle is not a number for a target that has none, which is why this
@@ -69,7 +70,7 @@ pub fn active() -> Calibration {
     MINTED
         .iter()
         .copied()
-        .find(|cal| cal.arch == std::env::consts::ARCH && cal.kernel == kernel)
+        .find(|cal| cal.arch == ARCH && cal.kernel == kernel)
         .unwrap_or(UNMEASURED)
 }
 
@@ -102,8 +103,8 @@ impl Calibration {
     pub fn sieve_per_byte(&self, conjuncts: usize) -> f64 {
         let want = conjuncts.clamp(1, MAX_CONJUNCTS) - 1;
         if let Some(below) = (0..=want).rev().find(|&i| self.sieve[i] > 0.0) {
-            // One doubling per unmeasured step up; exact in binary, so `powf` buys
-            // nothing a shift does not.
+            // One doubling per unmeasured step up. A power of two is exact in binary,
+            // so a shift is the whole exponentiation.
             return self.sieve[below] * (1u64 << (want - below)) as f64;
         }
         self.sieve[want..]
@@ -168,7 +169,7 @@ impl Calibration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::price::{CostFact, MACOS_AARCH64, NOMINAL_LEN};
+    use crate::price::{CostFact, MACOS_AARCH64_NEON, NOMINAL_LEN};
     use crate::prior;
 
     const UNMINTED: Calibration = UNMEASURED;
@@ -185,7 +186,7 @@ mod tests {
             !UNMEASURED.is_measured(),
             "the unmeasured row must admit it is unmeasured"
         );
-        assert!(MACOS_AARCH64.is_measured());
+        assert!(MACOS_AARCH64_NEON.is_measured());
     }
 
     /// The claim that decouples this crate from one laptop: the gate reads three
@@ -197,13 +198,13 @@ mod tests {
         let freq = prior::Prior::Source.byte_freq();
         for k in [0.25f64, 1.0, 3.7, 91.0] {
             let scaled = Calibration {
-                dfa_skip: MACOS_AARCH64.dfa_skip * k,
-                dfa_walk: MACOS_AARCH64.dfa_walk * k,
+                dfa_skip: MACOS_AARCH64_NEON.dfa_skip * k,
+                dfa_walk: MACOS_AARCH64_NEON.dfa_walk * k,
                 // Dimensionless: an excursion is a count of walk-priced bytes, not a
                 // duration, so it must NOT scale.
-                dfa_excursion: MACOS_AARCH64.dfa_excursion,
-                sieve: MACOS_AARCH64.sieve.map(|c| c * k),
-                ..MACOS_AARCH64
+                dfa_excursion: MACOS_AARCH64_NEON.dfa_excursion,
+                sieve: MACOS_AARCH64_NEON.sieve.map(|c| c * k),
+                ..MACOS_AARCH64_NEON
             };
             for accel in [&b""[..], b"W", b"e", b"abg"] {
                 for fallthrough in [0.0, 1e-6, 1e-3, 0.5] {
@@ -213,7 +214,7 @@ mod tests {
                         sieve: cal.sieve_per_byte(MAX_CONJUNCTS),
                         rival: cal.rival_per_byte(accel, &freq),
                     };
-                    let (base, now) = (of(&MACOS_AARCH64), of(&scaled));
+                    let (base, now) = (of(&MACOS_AARCH64_NEON), of(&scaled));
                     assert_eq!(
                         base.pays(),
                         now.pays(),
@@ -237,17 +238,26 @@ mod tests {
     fn resolution_matches_this_machine_or_admits_it_cannot() {
         let cal = active();
         if cal.is_measured() {
-            assert_eq!(cal.arch, std::env::consts::ARCH);
+            assert_eq!(cal.arch, ARCH);
             assert_eq!(cal.kernel, crate::shuffle::kernel());
         } else {
             assert!(
                 !MINTED
                     .iter()
-                    .any(|c| c.arch == std::env::consts::ARCH
-                        && c.kernel == crate::shuffle::kernel()),
+                    .any(|c| c.arch == ARCH && c.kernel == crate::shuffle::kernel()),
                 "a row exists for this machine but resolution missed it"
             );
         }
+    }
+
+    /// [`ARCH`] replaced `std::env::consts::ARCH`, and the replacement is only
+    /// correct if it is the *same string* — a mismatch would resolve every machine to
+    /// [`UNMEASURED`] and silently disarm the crate rather than fail loudly. Checked
+    /// against `std` wherever there is a `std` to check against.
+    #[cfg(feature = "std")]
+    #[test]
+    fn the_cfg_derived_arch_is_the_one_the_standard_library_reports() {
+        assert_eq!(ARCH, std::env::consts::ARCH);
     }
 
     #[test]

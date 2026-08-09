@@ -2,7 +2,7 @@
 //! runtime probe — the caller's `cfg(target_arch = "aarch64")` is the whole
 //! precondition.
 
-use std::arch::aarch64::{
+use core::arch::aarch64::{
     uint8x16_t, vandq_u8, vdupq_n_u8, vget_lane_u64, vgetq_lane_u8, vld1q_u8, vmaxq_u8, vqtbl1q_u8,
     vreinterpret_u64_u8, vreinterpretq_u16_u8, vshrn_n_u16, vshrq_n_u8, vtstq_u8,
 };
@@ -127,6 +127,6 @@ pub(crate) unsafe fn classify(lo: &[u8; 16], hi: &[u8; 16], hay: &[u8]) -> Optio
                 return Some(i * STEP + (packed.trailing_zeros() as usize >> 2));
             }
         }
-        crate::skip::wide::tail(lo, hi, hay)
+        crate::skip::wide::tail(lo, hi, hay, STEP)
     }
 }

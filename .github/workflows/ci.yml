@@ -104,6 +104,13 @@ jobs:
       - env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --all-features --locked
+      # Also without them, because half the intra-doc links in the crate docs point at
+      # items the `regex-automata` feature brings in — a rustdoc run that only ever sees
+      # every feature at once cannot notice a link that dangles for the callers who
+      # turned one off.
+      - env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --no-default-features --locked
 
   # The floor `rust-version` in Cargo.toml is a promise, not an aspiration — this is
   # what checks it every push instead of on the day a caller's pinned toolchain
@@ -125,6 +132,58 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - run: cargo check --workspace --all-targets --all-features --locked
 
+  # The `no_std` promise, checked rather than claimed. Two things can quietly break
+  # it and neither shows up in any job above, because every one of those builds with
+  # `--all-features`: a `std::` path creeping back into the library, and a feature
+  # combination nobody compiles.
+  #
+  # So this enumerates the **complete powerset** of the two features — four builds —
+  # rather than sampling it, which is affordable precisely because the feature set is
+  # deliberately two wide. Then it builds for two bare-metal targets, where the check
+  # has teeth that a host `--no-default-features` build does not: `std` is not merely
+  # unused there, it does not exist, and `x86_64-unknown-none` additionally has no SSE
+  # at all, so it is the leg that proves the scalar fallback still compiles when the
+  # byte-shuffle kernels are cfg'd away.
+  no-std:
+    name: no_std
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Nothing here pushes with the checkout credential, and leaving it in
+          # .git/config is how it ends up inside an uploaded artifact.
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+          targets: aarch64-unknown-none,x86_64-unknown-none
+          components: clippy
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: every feature combination
+        run: |
+          set -euo pipefail
+          for features in "" "std" "regex-automata" "std,regex-automata"; do
+            echo "::group::--no-default-features --features '$features'"
+            cargo clippy --lib --locked --no-default-features --features "$features" -- -D warnings
+            echo "::endgroup::"
+          done
+      - name: bare metal, where std does not exist to fall back on
+        run: |
+          set -euo pipefail
+          for target in aarch64-unknown-none x86_64-unknown-none; do
+            echo "::group::$target"
+            cargo clippy --lib --locked --no-default-features --target "$target" -- -D warnings
+            cargo clippy --lib --locked --no-default-features --features regex-automata \
+              --target "$target" -- -D warnings
+            echo "::endgroup::"
+          done
+      # Compiling is not running. `tests/dfa.rs` drives the entire pipeline —
+      # projection, lattice harvest, selectivity, vector dispatch, pricing — off a
+      # hand-written transition table, so it is the one suite that executes against the
+      # library with its dependencies and its `std` removed rather than merely building
+      # against it.
+      - run: cargo test --locked --no-default-features --test dfa
+
   deny:
     name: cargo-deny
     runs-on: ubuntu-latest
@@ -144,7 +203,7 @@ jobs:
   # workflow trusts this job rather than repeating the check under time pressure.
   package:
     name: package
-    needs: [fmt, clippy, test, doc, msrv, deny]
+    needs: [fmt, clippy, test, doc, msrv, no-std, deny]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -182,7 +241,7 @@ jobs:
   # upstream failed, which is exactly the case it has to report on.
   release-ready:
     if: always()
-    needs: [fmt, clippy, test, doc, msrv, deny, package, changelog]
+    needs: [fmt, clippy, test, doc, msrv, no-std, deny, package, changelog]
     runs-on: ubuntu-latest
     steps:
       - name: every required job is green

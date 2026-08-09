@@ -39,6 +39,8 @@
 //! `HS_FLAG_PREFILTER`, whose matches are documented as a superset for an exact
 //! matcher to confirm.
 
+use alloc::{vec, vec::Vec};
+
 use crate::projection::Projection;
 
 /// Residency bound: a 16-lane `pshufb` / `vqtbl1q` holds one transition row, so a
@@ -121,11 +123,26 @@ impl Forest {
     }
 }
 
+/// The three buffers a pair closure would otherwise allocate afresh on every one of
+/// the `O(n²)` pairs the sweep walks: the propagation stack, the canonical-id map,
+/// and the partition being built. Each is rewritten per pair rather than reallocated,
+/// so the whole sweep costs the allocations of one closure.
+struct Scratch {
+    work: Vec<(u16, u16)>,
+    canon: Vec<u8>,
+    block: Vec<u8>,
+}
+
 /// Harvest the lattice and return the chosen conjunction, most selective first.
 /// An empty result means no closed partition small enough to hold in a register
 /// carried any discriminating power.
 pub fn harvest(core: &Projection) -> Vec<Quotient> {
     let mut forest = Forest::new(core.states);
+    let mut scratch = Scratch {
+        work: Vec::new(),
+        canon: vec![u8::MAX; core.states],
+        block: vec![0u8; core.states],
+    };
     let mut steps = 0u64;
     let mut kept: Vec<(Vec<u8>, f32)> = Vec::new();
 
@@ -134,24 +151,26 @@ pub fn harvest(core: &Projection) -> Vec<Quotient> {
     let states = core.states as u16;
     'sweep: for p in 0..states {
         for q in (p + 1)..states {
-            let Some(block) = close(core, &mut forest, &mut steps, (p, q)) else {
+            let Some(block) = close(core, &mut forest, &mut steps, &mut scratch, (p, q)) else {
                 break 'sweep; // step budget spent; what we have is still sound
             };
-            let blocks = block_count(&block);
+            let blocks = block_count(block);
             if blocks <= 1 || usize::from(blocks) > LANES {
                 continue;
             }
-            let Some(quotient) = induce(core, &block, blocks) else {
-                continue;
-            };
-            if kept.iter().any(|(seen, _)| *seen == block) {
+            // Cheapest refusal first: a partition already held is rejected on a byte
+            // compare rather than after inducing a quotient nothing will keep.
+            if kept.iter().any(|(seen, _)| seen.as_slice() == block) {
                 continue;
             }
+            let Some(induced) = induce(core, block, blocks) else {
+                continue;
+            };
             // Rank by how small a slice of its own state space accepts, ties to
             // the finer partition — the one closer to the truth it approximates.
-            let accepting = f32::from(blocks - quotient.threshold);
+            let accepting = f32::from(blocks - induced.threshold);
             kept.push((
-                block,
+                block.to_vec(),
                 accepting / f32::from(blocks) - f32::from(blocks) * 1e-4,
             ));
             if kept.len() == MAX_CANDIDATES {
@@ -177,8 +196,9 @@ fn select(core: &Projection, mut kept: Vec<(Vec<u8>, f32)>) -> Vec<Quotient> {
         if chosen.iter().any(|c| refines(c, &block)) {
             continue;
         }
-        if let Some(q) = induce(core, &block, block_count(&block)) {
-            out.push(q);
+        let blocks = block_count(&block);
+        if let Some(induced) = induce(core, &block, blocks) {
+            out.push(induced.expand(core, blocks));
             chosen.push(block);
         }
     }
@@ -191,15 +211,17 @@ fn select(core: &Projection, mut kept: Vec<(Vec<u8>, f32)>) -> Vec<Quotient> {
 /// This is the classic pair-graph closure: merging two states forces their
 /// successors to merge, transitively. Because the forest already carries
 /// transitivity, propagating only the representative pair is complete.
-fn close(
+fn close<'s>(
     core: &Projection,
     forest: &mut Forest,
     steps: &mut u64,
+    scratch: &'s mut Scratch,
     pair: (u16, u16),
-) -> Option<Vec<u8>> {
+) -> Option<&'s [u8]> {
     forest.reset();
-    let mut work = vec![pair];
-    while let Some((a, b)) = work.pop() {
+    scratch.work.clear();
+    scratch.work.push(pair);
+    while let Some((a, b)) = scratch.work.pop() {
         if !forest.join(a, b) {
             continue;
         }
@@ -210,7 +232,7 @@ fn close(
         for k in 0..core.classes {
             let (x, y) = (core.step(a, k), core.step(b, k));
             if forest.find(x) != forest.find(y) {
-                work.push((x, y));
+                scratch.work.push((x, y));
             }
         }
     }
@@ -219,18 +241,17 @@ fn close(
     // MAX_CORE_STATES (96), so a block id always fits a u8 and no truncation
     // check is needed here — a partition too coarse for a register is rejected by
     // the caller on block count, not smuggled through a clamp.
-    let mut canon = vec![u8::MAX; core.states];
-    let mut block = vec![0u8; core.states];
+    scratch.canon.fill(u8::MAX);
     let mut blocks = 0u8;
-    for (slot, i) in block.iter_mut().zip(0u16..) {
+    for (slot, i) in scratch.block.iter_mut().zip(0u16..) {
         let root = usize::from(forest.find(i));
-        if canon[root] == u8::MAX {
-            canon[root] = blocks;
+        if scratch.canon[root] == u8::MAX {
+            scratch.canon[root] = blocks;
             blocks += 1;
         }
-        *slot = canon[root];
+        *slot = scratch.canon[root];
     }
-    Some(block)
+    Some(&scratch.block)
 }
 
 /// Does `fine` already distinguish everything `coarse` does — i.e. does adding
@@ -252,14 +273,51 @@ fn block_count(block: &[u8]) -> u8 {
     block.iter().copied().max().unwrap_or(0).saturating_add(1)
 }
 
-/// Build the quotient a closed partition induces, or decline.
+/// A closed partition that survived [`induce`], at the resolution the check itself
+/// runs at — one column per byte *class* rather than per byte.
+///
+/// Split from the byte-expanded [`Quotient`] because the sweep asks a great many
+/// candidates for their [`Induced::threshold`] and keeps at most
+/// [`MAX_CONJUNCTS`] of them; expanding the other rows to their kernel form would be
+/// four kilobytes written per candidate to be dropped on the next line.
+struct Induced {
+    /// Accepting iff `block >= threshold`, over the renumbered blocks.
+    threshold: u8,
+    /// The block the DFA's start state landed in, renumbered.
+    start: u8,
+    /// `table[block][class]` — the successor the closure check re-derived and agreed
+    /// with. [`Induced::expand`] is what turns a class back into 256 bytes.
+    table: [[u8; 256]; LANES],
+}
+
+impl Induced {
+    /// Widen the class columns back out to the byte rows the shuffle kernel indexes.
+    fn expand(&self, core: &Projection, blocks: u8) -> Quotient {
+        // Lanes past the block count keep their zero: a state that does not exist is
+        // never entered, so its column is never read.
+        let mut rows = [[0u8; LANES]; 256];
+        for (row, &k) in rows.iter_mut().zip(&core.class_of) {
+            for (lane, state) in row.iter_mut().zip(&self.table[..usize::from(blocks)]) {
+                *lane = state[usize::from(k)];
+            }
+        }
+        Quotient {
+            blocks,
+            threshold: self.threshold,
+            start: self.start,
+            rows,
+        }
+    }
+}
+
+/// Check the quotient a closed partition induces, or decline.
 ///
 /// The harvest's arithmetic is **not trusted**: the transition is re-derived from
 /// the raw partition and any disagreement rejects the candidate, because a
 /// partition that is not actually closed over-approximates nothing. The other two
 /// declinatures are economic — a quotient whose start block accepts would accept
 /// at every position, and one where every block accepts would reject nothing.
-fn induce(core: &Projection, block: &[u8], blocks: u8) -> Option<Quotient> {
+fn induce(core: &Projection, block: &[u8], blocks: u8) -> Option<Induced> {
     if usize::from(blocks) > LANES {
         return None;
     }
@@ -310,18 +368,9 @@ fn induce(core: &Projection, block: &[u8], blocks: u8) -> Option<Quotient> {
         return None; // an unreachable block means the renumbering lied
     }
 
-    // Lanes past the block count keep their zero: a state that does not exist is
-    // never entered, so its column is never read.
-    let mut rows = [[0u8; LANES]; 256];
-    for (row, &k) in rows.iter_mut().zip(&core.class_of) {
-        for (lane, state) in row.iter_mut().zip(&table[..nb]) {
-            *lane = state[usize::from(k)];
-        }
-    }
-    Some(Quotient {
-        blocks,
+    Some(Induced {
         threshold,
         start,
-        rows,
+        table,
     })
 }

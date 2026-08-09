@@ -20,7 +20,8 @@
 //!
 //! # Why it is sound
 //!
-//! [`Sieve::new`] builds `regex-automata`'s own `dense::DFA`, projects it onto its
+//! A sieve reads a finished DFA — `regex-automata`'s own `dense::DFA` by default, or
+//! anything else satisfying [`Dfa`] — projects it onto its
 //! reachable core (`projection`), and climbs the lattice of
 //! **substitution-property partitions** past the point where language is
 //! preserved (`lattice`) — a partition closed under the transition function
@@ -91,8 +92,41 @@
 //! [`BuildError::Uncalibrated`] rather than another machine's optimism. The shipped
 //! [`prior`] describes a polyglot source tree; a caller whose corpus is prose, logs or
 //! DNA mints their own and passes it in.
+//!
+//! # What this crate needs to exist
+//!
+//! The sieve is arithmetic and sixteen bytes of table, so it asks for very little and
+//! says so in its feature set rather than in a paragraph.
+//!
+//! Scanning needs **no operating system**. [`Sieve::refutes`] reads a [`Quotient`]'s
+//! rows and, where one was elected, a [`Skip`] — whose narrowest escape sets go
+//! through `memchr`, this crate's one unconditional dependency and itself `no_std`.
+//! Pricing needs none either: every float operation in the crate is `+ - * /` and a
+//! comparison, so there is no `powf`, no `libm`, and no math library behind either.
+//! Even the runtime SSSE3 probe reads `CPUID` directly instead of asking
+//! `std::arch::is_x86_feature_detected!`, because for that particular feature bit the
+//! two are the same question. `--no-default-features` is therefore a `no_std` build;
+//! an allocator is still required, because the tables are [`Vec`]-shaped.
+//!
+//! Building is where the dependency lives, and only there. A pattern has to be
+//! *parsed*, and this crate deliberately does not own a parser — the soundness
+//! argument above is about the automaton that will run the confirming
+//! search, so reading that engine's automaton is the whole point. The default
+//! `regex-automata` feature supplies both the parser and the [`Dfa`] impl.
+//! Turn it off and the pattern constructors go away, leaving [`Sieve::of_dfa`]
+//! over any automaton a caller can walk. That split falls where the code already
+//! divided: nothing in `regex-automata` was ever on the scan path.
+
+#![cfg_attr(not(feature = "std"), no_std)]
+// Nightly-only, and set by nothing but docs.rs (see `[package.metadata.docs.rs]`):
+// it is what makes rustdoc label the `regex-automata` items with the feature that
+// carries them, rather than rendering them as though they were unconditional.
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
+extern crate alloc;
 
 mod arch;
+mod dfa;
 mod error;
 mod lattice;
 pub mod price;
@@ -102,16 +136,14 @@ mod selectivity;
 pub mod shuffle;
 mod skip;
 
+pub use dfa::Dfa;
 pub use error::BuildError;
 pub use lattice::{MAX_CONJUNCTS, Quotient, harvest};
 pub use projection::{Decline, Projection};
 pub use selectivity::worst_case;
 pub use skip::{Instrument, Skip};
 
-use regex_automata::Input;
-use regex_automata::dfa::{Automaton, dense};
-use regex_automata::nfa::thompson;
-use regex_automata::util::syntax;
+use alloc::vec::Vec;
 
 use price::{Calibration, CostFact};
 use prior::Chain;
@@ -160,25 +192,20 @@ impl Lane {
     fn plan(quotient: Quotient, policy: &Policy<'_>, compose: f64) -> (Self, f64) {
         let usable =
             policy.skip && policy.calibration.is_measured() && quotient.start < quotient.threshold;
-        let skip = Skip::of(&quotient.rows, quotient.start).filter(|_| usable);
-        let price = |s: &Skip| policy.calibration.skip_per_byte(s, policy.freq);
-        match skip.filter(|s| price(s) < compose) {
-            Some(skip) => {
-                let cost = price(&skip);
-                let lane = Self {
-                    quotient,
-                    skip: Some(skip),
-                };
-                (lane, cost)
-            },
-            None => (
-                Self {
-                    quotient,
-                    skip: None,
-                },
-                compose,
-            ),
-        }
+        // Every condition is checked before `Skip::of` reads 256 rows and allocates,
+        // so a conjunct the policy already ruled out costs nothing to rule out.
+        let priced = usable
+            .then(|| Skip::of(&quotient.rows, quotient.start))
+            .flatten()
+            .map(|s| {
+                let cost = policy.calibration.skip_per_byte(&s, policy.freq);
+                (s, cost)
+            });
+        let (skip, cost) = match priced {
+            Some((skip, cost)) if cost < compose => (Some(skip), cost),
+            _ => (None, compose),
+        };
+        (Self { quotient, skip }, cost)
     }
 
     fn refutes(&self, haystack: &[u8]) -> bool {
@@ -193,8 +220,8 @@ impl Lane {
 /// those skip rather than compose, what share of positions it is modeled to pass on,
 /// and what the gate expected that to be worth. The quotient tables themselves are
 /// register images and would print as noise.
-impl std::fmt::Debug for Sieve {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Sieve {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Sieve")
             .field("conjuncts", &self.lanes.len())
             .field("skipping", &self.skipping())
@@ -277,6 +304,10 @@ impl Default for Policy<'_> {
     }
 }
 
+/// The pattern-string constructors, which are the only part of this crate that needs
+/// a parser — and therefore the only part behind the `regex-automata` feature. The
+/// automaton constructors below it are always available.
+#[cfg(feature = "regex-automata")]
 impl Sieve {
     /// Build a sieve for `pattern`, or explain why the pattern gets none.
     ///
@@ -304,6 +335,12 @@ impl Sieve {
     /// Build a sieve for `pattern` under a caller-supplied [`Policy`] — the seam for
     /// a machine or a corpus this crate never measured.
     pub fn with(pattern: &str, policy: &Policy<'_>) -> Result<Self, BuildError> {
+        use alloc::string::ToString;
+
+        use regex_automata::dfa::dense;
+        use regex_automata::nfa::thompson;
+        use regex_automata::util::syntax;
+
         let dfa = dense::Builder::new()
             .syntax(syntax::Config::new().utf8(false))
             .thompson(thompson::Config::new().utf8(false))
@@ -311,24 +348,27 @@ impl Sieve {
             .map_err(|e| BuildError::Automaton(e.to_string()))?;
         Self::of_dfa_with(&dfa, policy)
     }
+}
 
-    /// Build a sieve for a DFA the caller already has, so the filter and the
+impl Sieve {
+    /// Build a sieve for an automaton the caller already has, so the filter and the
     /// confirming search are provably the same automaton — and so the rival's price
     /// is read from the engine that will actually run.
-    pub fn of_dfa(dfa: &dense::DFA<Vec<u32>>) -> Result<Self, BuildError> {
+    ///
+    /// This is the constructor with no parser behind it, and the only one a `no_std`
+    /// build has. See [`Dfa`] for what an automaton has to be able to answer, and for
+    /// the obligation a caller takes on by answering it.
+    pub fn of_dfa<D: Dfa>(dfa: &D) -> Result<Self, BuildError> {
         Self::of_dfa_with(dfa, &Policy::default())
     }
 
     /// [`Sieve::of_dfa`] with an explicit [`Policy`] rather than [`Policy::default`].
-    pub fn of_dfa_with(
-        dfa: &dense::DFA<Vec<u32>>,
-        policy: &Policy<'_>,
-    ) -> Result<Self, BuildError> {
+    pub fn of_dfa_with<D: Dfa>(dfa: &D, policy: &Policy<'_>) -> Result<Self, BuildError> {
         // Refuse before doing any work rather than after: an unmeasured machine cannot
         // be talked into a speedup by a well-shaped automaton.
         if policy.gate == Gate::Worth && !policy.calibration.is_measured() {
             return Err(BuildError::Uncalibrated {
-                arch: std::env::consts::ARCH,
+                arch: price::ARCH,
                 kernel: shuffle::kernel(),
             });
         }
@@ -343,14 +383,15 @@ impl Sieve {
         // conjunct that answers, so the measured coefficient already describes one
         // pass — and pricing a pair at the cheaper of the two would credit a
         // short-circuit the caller only sometimes gets.
-        let (lanes, sieve) =
-            quotients
-                .into_iter()
-                .fold((Vec::new(), 0.0f64), |(mut lanes, worst), quotient| {
-                    let (lane, cost) = Lane::plan(quotient, policy, compose);
-                    lanes.push(lane);
-                    (lanes, worst.max(cost))
-                });
+        let mut sieve = 0.0f64;
+        let lanes: Vec<Lane> = quotients
+            .into_iter()
+            .map(|quotient| {
+                let (lane, cost) = Lane::plan(quotient, policy, compose);
+                sieve = sieve.max(cost);
+                lane
+            })
+            .collect();
         let cost = CostFact {
             fallthrough,
             len: policy.len,
@@ -416,7 +457,7 @@ impl Sieve {
 
 /// What the engine costs per byte, asked of the engine rather than assumed.
 ///
-/// `Automaton::accelerator` on the start state is the engine stating which bytes it
+/// [`Dfa::accelerator`] on the start state is the engine stating which bytes it
 /// will `memchr` past; an empty answer means it is committed to a per-byte walk.
 ///
 /// Priced under the policy's byte marginals alone, where [`selectivity::worst_case`]
@@ -431,8 +472,8 @@ impl Sieve {
 /// Taking the worst case of one and the realistic case of the other is not mixing
 /// worlds: it is pessimism where the sieve makes a promise and realism where the
 /// rival does.
-fn rival_cost(dfa: &dense::DFA<Vec<u32>>, policy: &Policy<'_>) -> f64 {
-    let Ok(start) = dfa.start_state_forward(&Input::new(b"")) else {
+fn rival_cost<D: Dfa>(dfa: &D, policy: &Policy<'_>) -> f64 {
+    let Some(start) = dfa.start() else {
         // Cannot tell what the engine will do, so assume the best case for it and let
         // the sieve stand down.
         return policy.calibration.dfa_skip;

@@ -69,8 +69,18 @@
 //! absorbing accept drives its long-run rate to 1) for two percent. Left undone
 //! deliberately.
 
+#[cfg(any(
+    target_arch = "aarch64",
+    all(target_arch = "x86_64", target_feature = "sse2")
+))]
 use crate::arch;
-use crate::lattice::{LANES, Quotient};
+// `LANES` sizes `IDENTITY`, which only a vector chain seeds itself from.
+#[cfg(any(
+    target_arch = "aarch64",
+    all(target_arch = "x86_64", target_feature = "sse2")
+))]
+use crate::lattice::LANES;
+use crate::lattice::Quotient;
 use crate::skip::Skip;
 
 /// Which byte-shuffle instruction set [`refutes`] dispatches to on the machine
@@ -80,6 +90,12 @@ pub use crate::arch::Kernel;
 
 /// What [`refutes`] will actually run here. See [`crate::arch::kernel`].
 pub use crate::arch::kernel;
+
+/// Every kernel this silicon could run, and the seam that makes one of them run —
+/// what `examples/mint.rs` sweeps so a machine gets a priced row per kernel rather
+/// than only for the one dispatch would have picked. See [`crate::arch::available`]
+/// and [`crate::arch::force`].
+pub use crate::arch::{available, force};
 
 /// Bytes between accept checks. One resolution per chunk instead of per byte; the
 /// per-lane max cannot lose an accept inside a chunk, so the only cost of a larger
@@ -102,6 +118,13 @@ pub(crate) const CHUNK: usize = 256;
 /// of covering the latency and eight starts costing more in register pressure and
 /// short-document setup than the extra chains return, so the curve is flat exactly
 /// where the latency argument says it should be.
+///
+/// Present only where there is a byte shuffle to issue; see [`crate::arch`] for the
+/// condition and for every other site that shares it.
+#[cfg(any(
+    target_arch = "aarch64",
+    all(target_arch = "x86_64", target_feature = "sse2")
+))]
 pub(crate) const WAYS: usize = 4;
 
 /// Bytes each chain walks per full chunk. The slices tile the chunk exactly, so the
@@ -111,17 +134,23 @@ pub(crate) const WAYS: usize = 4;
 /// scalar walk — a 64-byte document is entirely "final chunk", and handing that case
 /// to the reference path made small documents several times *slower* than the kernel
 /// they were supposed to be using.
+#[cfg(any(
+    target_arch = "aarch64",
+    all(target_arch = "x86_64", target_feature = "sse2")
+))]
 pub(crate) const STRIDE: usize = CHUNK / WAYS;
 
 /// The do-nothing function: lane `i` holds `i`, so shuffling by it is identity and
 /// shuffling it by a row yields that row. Every chain starts here.
+#[cfg(any(
+    target_arch = "aarch64",
+    all(target_arch = "x86_64", target_feature = "sse2")
+))]
 pub(crate) const IDENTITY: [u8; LANES] = {
     let mut v = [0u8; LANES];
     let mut i = 0;
     while i < LANES {
-        {
-            v[i] = i as u8;
-        }
+        v[i] = i as u8;
         i += 1;
     }
     v
@@ -145,10 +174,15 @@ pub fn refutes(q: &Quotient, hay: &[u8]) -> bool {
         // where NEON is baseline — exactly `arch::neon::sweep_shuffle`'s own
         // precondition.
         Kernel::Neon => unsafe { arch::neon::sweep_shuffle(q, hay) },
-        #[cfg(target_arch = "x86_64")]
-        // SAFETY: `kernel()` returns `Ssse3` only after `is_x86_feature_detected!`
-        // confirmed the CPU has it — exactly `arch::ssse3::sweep_shuffle`'s own
-        // precondition.
+        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+        // SAFETY: `kernel()` names `Avx2` only where the probe confirmed the silicon
+        // bit, `OSXSAVE` and `XCR0`'s upper-half promise — exactly
+        // `arch::avx2::sweep_shuffle`'s own precondition. `arch::force` can only name
+        // a kernel that same probe admitted, so the seam does not widen this.
+        Kernel::Avx2 => unsafe { arch::avx2::sweep_shuffle(q, hay) },
+        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+        // SAFETY: `kernel()` returns `Ssse3` only after its `CPUID` probe confirmed
+        // the CPU has it — exactly `arch::ssse3::sweep_shuffle`'s own precondition.
         Kernel::Ssse3 => unsafe { arch::ssse3::sweep_shuffle(q, hay) },
         _ => scalar(q, hay),
     }
@@ -227,7 +261,15 @@ pub(crate) fn walk(q: &Quotient, hay: &[u8], mut state: u8) -> Option<u8> {
     (high < q.threshold).then_some(state)
 }
 
-#[cfg(test)]
+/// Both claims here are about the composition kernel's slicing, so they live where
+/// that kernel does: a target with no byte shuffle has no slices to tile.
+#[cfg(all(
+    test,
+    any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "sse2")
+    )
+))]
 mod tests {
     use super::*;
 

@@ -39,9 +39,32 @@ when it wouldn't pay — the common, intended outcome.
 cargo add sheng
 ```
 
-Rust 1.95+, edition 2024, Apache-2.0. Two dependencies — `regex-automata` for
-the automaton, `memchr` for narrow byte searches — both already in the graph of
-anyone using `regex`.
+Rust 1.95+, edition 2024, Apache-2.0. Two dependencies by default —
+`regex-automata` for the automaton, `memchr` for narrow byte searches — both
+already in the graph of anyone using `regex`.
+
+Neither is on the scan path, and the feature set says so rather than a paragraph:
+
+```bash
+cargo add sheng --no-default-features   # no_std + alloc, memchr only
+```
+
+`--no-default-features` is a `no_std` build. What goes away is the parser, so
+`Sieve::new` goes with it and [`Sieve::of_dfa`][dfa] over any automaton
+satisfying the `Dfa` trait is the way in. What stays is everything that runs:
+the projection, the lattice harvest, the selectivity model, the vector kernels,
+and the arming gate. There is no `powf`, no `libm`, and no math library behind
+either — every float operation in the crate is `+ - * /` and a comparison — and
+the SSSE3 probe is read from `CPUID` directly rather than through
+`std::arch::is_x86_feature_detected!`, so nothing of sheng's own is lost. An
+allocator is still required; the transition tables are `Vec`-shaped.
+
+| feature | default | what it adds |
+|---|---|---|
+| `regex-automata` | on | the parser, and the `Dfa` impl for the engine that runs the confirming search |
+| `std` | on | `memchr`'s AVX2 runtime dispatch, and `regex-automata`'s own `std` leg |
+
+[dfa]: https://docs.rs/sheng/latest/sheng/struct.Sieve.html#method.of_dfa
 
 ## Platforms
 
@@ -273,7 +296,7 @@ sieve  +  (1 - (1-f)^len) * rival   <   rival
 ```
 
 Every term is absolute ns/byte, and the rival's term is read from
-`Automaton::accelerator` on the engine's own start state — the crate asks what
+`Dfa::accelerator` on the engine's own start state — the crate asks what
 it intends to skip, and prices that.
 
 ### The Persistence-Aware Prior

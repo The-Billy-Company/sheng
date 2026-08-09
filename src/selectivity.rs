@@ -53,6 +53,8 @@
 //! a fixed point, because from there every remaining Cesàro term is the term already
 //! in hand and can be added in closed form rather than iterated for.
 
+use alloc::vec::Vec;
+
 use crate::lattice::{LANES, Quotient};
 use crate::prior::{CLASSES, Chain, Class, members};
 
@@ -157,16 +159,26 @@ impl Spread {
     /// `chain`.
     #[must_use]
     pub fn rate(&self, chain: &Chain) -> f64 {
+        // Two buffers alternated by reference rather than by value: these are kilobyte
+        // arrays, and exchanging them bodily would memcpy more per step than the step
+        // itself spends on arithmetic.
+        let (mut this, mut that) = ([0.0f64; JOINT], [0.0f64; JOINT]);
+        let (mut held, mut next) = (&mut this, &mut that);
+
         // The scan starts in the quotient's start block, with the first byte's class
         // drawn from the stationary distribution. A block's classes are contiguous in
         // `slot` order, so seeding is one copy.
-        let mut held = [0.0f64; JOINT];
         let start = slot(self.start, 0);
         held[start..start + CLASSES].copy_from_slice(&chain.start);
 
-        let mut next = [0.0f64; JOINT];
-        let mut cesaro = [0.0f64; JOINT];
+        // Accepting blocks are the top ones by construction, so their joint slots are
+        // one contiguous tail — and the Cesàro average of that tail is the average of
+        // its per-step sums, so the running total is a scalar rather than a vector
+        // summed at the end.
         let live = self.blocks * CLASSES;
+        let tail = slot(self.threshold, 0);
+        let memoryless = chain.marginal();
+        let mut cesaro = 0.0f64;
         for _ in 0..ITERATIONS {
             next[..live].fill(0.0);
             for (block, spans_of) in self.spans[..self.blocks].iter().enumerate() {
@@ -176,13 +188,25 @@ impl Spread {
                 // whatever class it arrived on. The quotient is not consulted yet, and
                 // never again after.
                 let mut draw = [0.0f64; CLASSES];
-                for (row, &mass) in chain.next.iter().zip(was) {
-                    if mass == 0.0 {
-                        continue;
-                    }
-                    for (d, &p) in draw.iter_mut().zip(row) {
-                        *d += mass * p;
-                    }
+                match memoryless {
+                    // Nothing about the arrival class survives into the draw, so the
+                    // block's whole mass can be totalled once and scaled once.
+                    Some(marginal) => {
+                        let mass: f64 = was.iter().sum();
+                        for (d, &p) in draw.iter_mut().zip(marginal) {
+                            *d = mass * p;
+                        }
+                    },
+                    None => {
+                        for (row, &mass) in chain.next.iter().zip(was) {
+                            if mass == 0.0 {
+                                continue;
+                            }
+                            for (d, &p) in draw.iter_mut().zip(row) {
+                                *d += mass * p;
+                            }
+                        }
+                    },
                 }
                 for (class, (&(from, until), mass)) in spans_of.iter().zip(draw).enumerate() {
                     if mass == 0.0 {
@@ -191,20 +215,14 @@ impl Spread {
                     // The byte drawn *is* the next state's class, so the class index is
                     // fixed across the span and only the block moves.
                     for edge in &self.edges[usize::from(from)..usize::from(until)] {
-                        next[usize::from(edge.to) * CLASSES + class] += mass * edge.share;
+                        next[slot(edge.to, class)] += mass * edge.share;
                     }
                 }
             }
-            std::mem::swap(&mut held, &mut next);
-            for (sum, &x) in cesaro[..live].iter_mut().zip(&held[..live]) {
-                *sum += x;
-            }
+            core::mem::swap(&mut held, &mut next);
+            cesaro += held[tail..live].iter().sum::<f64>();
         }
-
-        // Accepting blocks are the top ones by construction, so their joint slots are
-        // one contiguous tail — summed before the single division rather than after.
-        let iterations = ITERATIONS as f64;
-        cesaro[slot(self.threshold, 0)..live].iter().sum::<f64>() / iterations
+        cesaro / ITERATIONS as f64
     }
 }
 
@@ -230,7 +248,10 @@ pub fn worst_case(quotients: &[Quotient], chains: &[Chain]) -> f64 {
         .fold(1.0f64, f64::min)
 }
 
-#[cfg(test)]
+/// Held against the byte-level definition of the same chain, which needs real
+/// quotients off real patterns — so this module builds automata, and is therefore
+/// gated on the feature that can.
+#[cfg(all(test, feature = "regex-automata"))]
 mod tests {
     use regex_automata::dfa::dense;
     use regex_automata::nfa::thompson;

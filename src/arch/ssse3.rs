@@ -1,7 +1,7 @@
 //! SSSE3 kernels: probed at runtime by [`super::kernel`] before either of these is
 //! ever called.
 
-use std::arch::x86_64::{
+use core::arch::x86_64::{
     __m128i, _mm_and_si128, _mm_cmpeq_epi8, _mm_cvtsi128_si32, _mm_loadu_si128, _mm_max_epu8,
     _mm_movemask_epi8, _mm_set1_epi8, _mm_setzero_si128, _mm_shuffle_epi8, _mm_srli_epi16,
 };
@@ -11,10 +11,14 @@ use crate::lattice::Quotient;
 use crate::shuffle::{self, CHUNK, IDENTITY, STRIDE, WAYS};
 
 /// Low lane of a vector every lane of which is already the same byte.
-unsafe fn low(v: __m128i) -> u8 {
-    // SAFETY: `_mm_cvtsi128_si32` reads the low 32 bits of any `__m128i`; it has no
-    // alignment or initialization precondition beyond a valid vector, which every
-    // caller here already holds.
+///
+/// Shared with [`super::avx2`], whose collapse ends in the same 128-bit broadcast:
+/// two spellings of "read the state back out" is one more than the number of answers.
+pub(super) fn low(v: __m128i) -> u8 {
+    // SAFETY: `_mm_cvtsi128_si32` reads the low 32 bits of a vector it is handed by
+    // value and has no precondition beyond `sse2` — which is a condition of this
+    // module being compiled at all, so the feature is present on every target that
+    // can reach this line.
     unsafe { _mm_cvtsi128_si32(v) as u32 as u8 }
 }
 
@@ -115,6 +119,6 @@ pub(crate) unsafe fn classify(lo: &[u8; 16], hi: &[u8; 16], hay: &[u8]) -> Optio
                 return Some(i * STEP + (!miss & 0xFFFF).trailing_zeros() as usize);
             }
         }
-        crate::skip::wide::tail(lo, hi, hay)
+        crate::skip::wide::tail(lo, hi, hay, STEP)
     }
 }

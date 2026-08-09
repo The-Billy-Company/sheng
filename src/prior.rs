@@ -138,6 +138,19 @@ impl Chain {
             start: marginal,
         }
     }
+
+    /// [`Chain::memoryless`] read back: the one row every row is, or `None` when this
+    /// chain has persistence to speak of.
+    ///
+    /// Asked by [`crate::worst_case`], where it is worth a scan of six rows to learn:
+    /// a chain that draws the next class the same way whatever the last one was cannot
+    /// have the last one steer the draw, so its joint step collapses from a 7x7
+    /// product to one total and one scaling. That is the same collapse
+    /// [`crate::prior`] describes above, taken rather than merely noted.
+    pub(crate) fn marginal(&self) -> Option<&[f64; CLASSES]> {
+        let (first, rest) = self.next.split_first()?;
+        rest.iter().all(|row| row == first).then_some(first)
+    }
 }
 
 /// Every byte value equally likely. Assumes nothing about the document at all.

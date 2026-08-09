@@ -7,10 +7,13 @@
 //! beats verifying everything:
 //!
 //! ```text
-//! sieve  +  (1 - (1-f)^len) * rival   <   rival
+//! (sieve  +  (1 - (1-f)^len) * rival) * (1 + MARGIN)   <   rival
 //! ```
 //!
-//! Every term is an absolute per-byte cost. The version this replaces was a single
+//! Every term is an absolute per-byte cost, and [`MARGIN`] is there because every one
+//! of them is a *measurement*: a verdict is a ratio of two coefficients whose own
+//! run-to-run spread the mint publishes, so a decision inside that spread is a
+//! coincidence rather than a finding. The version this replaces was a single
 //! threshold on `f` alone, which silently assumed three things it could not
 //! distinguish: that one conjunct costs what two do, that the sieve's price is a
 //! fixed fraction of its rival's, and — worst — that the rival is always a per-byte
@@ -63,5 +66,9 @@ mod gate;
 mod minted;
 
 pub use calibration::{Calibration, active};
-pub use gate::{CostFact, NOMINAL_LEN, survival};
-pub use minted::{LINUX_X86_64, MACOS_AARCH64, MINTED, UNMEASURED};
+pub use gate::{CostFact, MARGIN, NOMINAL_LEN, survival};
+pub use minted::{LINUX_X86_64_SSSE3, MACOS_AARCH64_NEON, MINTED, UNMEASURED};
+
+/// The architecture string [`MINTED`] keys its rows on, and the one a fresh row
+/// must name. See [`crate::arch::ARCH`].
+pub use crate::arch::ARCH;

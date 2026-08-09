@@ -60,7 +60,7 @@ use crate::shuffle::Kernel;
 /// likely to move on the next full re-mint: measured unpaired it drifts ~21% run to
 /// run on this machine. It is left alone rather than half-corrected, for the
 /// two-afternoons reason above — re-mint the row whole.
-pub const MACOS_AARCH64: Calibration = Calibration {
+pub const MACOS_AARCH64_NEON: Calibration = Calibration {
     arch: "aarch64",
     kernel: Kernel::Neon,
     host: "macos aarch64 · 16 logical cores · Neon kernel",
@@ -74,7 +74,7 @@ pub const MACOS_AARCH64: Calibration = Calibration {
 
 /// Native x86_64 Linux on an idle 13th-gen Intel box, 20 logical cores.
 ///
-/// **Re-minted 2026-08-03**, same day and same procedure as [`MACOS_AARCH64`], and
+/// **Re-minted 2026-08-03**, same day and same procedure as [`MACOS_AARCH64_NEON`], and
 /// for the same reason: the prior row (2026-07-29) timed the serial-shuffle kernel,
 /// which [`crate::shuffle`] no longer runs — it now composes four slices in parallel
 /// against the held transition function. This row supersedes the old one outright
@@ -91,7 +91,7 @@ pub const MACOS_AARCH64: Calibration = Calibration {
 /// shape does not erase. Inheriting one machine's numbers on the other would still
 /// misprice which patterns arm — which is the whole reason this crate keeps a row
 /// per (architecture, kernel) pair instead of one default.
-pub const LINUX_X86_64: Calibration = Calibration {
+pub const LINUX_X86_64_SSSE3: Calibration = Calibration {
     arch: "x86_64",
     kernel: Kernel::Ssse3,
     host: "linux x86_64 · 20 logical cores · Ssse3 kernel",
@@ -129,7 +129,36 @@ pub const UNMEASURED: Calibration = Calibration {
 /// Every (architecture, kernel) pair anybody has actually measured. [`super::active`]
 /// picks from here by matching the running target; adding silicon means adding a
 /// row, not editing a default.
-pub const MINTED: &[Calibration] = &[MACOS_AARCH64, LINUX_X86_64];
+///
+/// The key is `(architecture, kernel)`, not `(os, architecture, kernel)` — Windows is
+/// not a third row waiting to be minted, it is a claim that these same two already
+/// cover it. `.github/workflows/native.yml` runs both rows' underlying (architecture,
+/// kernel) pairs natively across all six Windows/Linux/macOS × x86_64/arm64 legs on
+/// every push: each leg proves dispatch chose the matching vector kernel and that the
+/// gate above armed no row that then lost against real source text. An OS column
+/// would only earn its keep the day one leg measures a loss the other two don't —
+/// evidence, not a guess that Windows differs, is what would justify it.
+///
+/// # This slice is also the dispatch ladder's permission list
+///
+/// [`crate::shuffle::kernel`] will not select a kernel that has no row here, so what
+/// is *absent* from this slice is as load-bearing as what is present. Two consequences
+/// worth stating out loud:
+///
+/// * A new instruction set lands without a flag day. `Kernel::Avx2` is implemented,
+///   differentially tested against the scalar reference on real AVX2 silicon by
+///   `tests/kernels.rs`, and **not dispatched to**, because no row below was measured
+///   on it. Adding one arms it; until then it moves no decision, and — the failure this
+///   ordering exists to prevent — it cannot win a dispatch on a machine whose only
+///   calibration describes `pshufb` and thereby strand a modern x86_64 install on
+///   [`UNMEASURED`].
+/// * A row is therefore per *kernel*, not per machine, which is why these names carry
+///   both halves of the key. One `cargo run --release --example mint` prints a row for
+///   every kernel the running silicon has, so a machine's rows can be pasted in
+///   together or one at a time without either one implying the other.
+///   `.github/workflows/mint.yml` is that run, on real hardware for every
+///   (architecture, kernel) pair this crate dispatches to.
+pub const MINTED: &[Calibration] = &[MACOS_AARCH64_NEON, LINUX_X86_64_SSSE3];
 
 #[cfg(test)]
 mod tests {
@@ -154,6 +183,39 @@ mod tests {
                 "duplicate calibration for {} / {:?}",
                 cal.arch,
                 cal.kernel
+            );
+        }
+    }
+
+    /// The safety property that lets an unpriced kernel exist in the tree at all:
+    /// dispatch never elects one. Stated here rather than in [`crate::arch`] because it
+    /// is a claim about *this slice* — the moment a row lands for a faster kernel the
+    /// answer is allowed to change, and the moment one is deleted it must change back.
+    #[test]
+    fn dispatch_never_elects_a_kernel_this_slice_has_not_priced() {
+        let chosen = crate::shuffle::kernel();
+        let ladder = crate::shuffle::available();
+        assert!(
+            ladder.contains(&chosen),
+            "dispatch chose {chosen:?}, which this silicon cannot execute"
+        );
+        let priced = |kernel| {
+            MINTED
+                .iter()
+                .any(|c| c.arch == crate::price::ARCH && c.kernel == kernel)
+        };
+        if ladder.iter().copied().any(priced) {
+            assert!(
+                priced(chosen),
+                "{} has a priced kernel but dispatch chose the unpriced {chosen:?}",
+                crate::price::ARCH
+            );
+            // And the *fastest* such, or the ladder's order is decoration.
+            let best = ladder.iter().copied().find(|&k| priced(k));
+            assert_eq!(
+                Some(chosen),
+                best,
+                "dispatch settled for {chosen:?} while {best:?} is both faster and priced"
             );
         }
     }

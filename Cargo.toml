@@ -31,46 +31,117 @@ authors = [ "The Billy Company" ]
 # somebody types when they already know they want this shape of thing;
 # `refutation` is the one nothing else on the index claims.
 keywords = [ "regex", "prefilter", "simd", "automata", "refutation" ]
-categories = [ "text-processing", "algorithms" ]
-# The examples are instruments, not demos — `mint` is how a machine gets its
-# calibration row — so they ship. Build output does not.
-exclude = [ "/target" ]
+# `no-std` is not aspirational here: `--no-default-features` is the build the feature
+# table below was designed around, so the audience browsing that category is the one
+# this crate was shaped for.
+categories = [ "text-processing", "algorithms", "no-std" ]
+# A whitelist rather than a blacklist, for the same reason `resolver` and
+# `autoexamples` are declared above: what a consumer receives is stated once, not
+# inherited from whatever the repository accumulates, so the next workflow or release
+# tool cannot quietly add itself to the tarball. What ships is what someone holding
+# only the `.crate` can use — the sources, the tests and examples that argue they are
+# right (`mint` is how a machine gets its own calibration row), the license trail, and
+# the three configs that make a rebuild's own `clippy` and `deny` runs agree with this
+# repository's. What does not: `.github/`, the hooks, and the release-please and
+# towncrier machinery, which operate the repository rather than the crate — and
+# `rust-toolchain.toml`, which would drag a downstream rebuild onto 1.96 when the
+# sources only ever asked for `rust-version`. Every source directory is named by
+# extension rather than wholesale, because `include` is the point at which Cargo stops
+# consulting `.gitignore`: a bare `/src` would ship whatever the working tree is
+# carrying that day, `.DS_Store` included.
+include = [
+  "/src/**/*.rs",
+  "/src/**/README.md",
+  "/tests/*.rs",
+  "/tests/README.md",
+  "/examples/*.rs",
+  "/examples/README.md",
+  "/README.md",
+  "/CHANGELOG.md",
+  "/LICENSE",
+  "/NOTICE",
+  "/SECURITY.md",
+  "/clippy.toml",
+  "/rustfmt.toml",
+  "/deny.toml",
+]
+
+# docs.rs builds with the defaults otherwise, which would document the crate as if
+# `regex-automata` were the only shape it has. `--cfg docsrs` turns on the `doc_cfg`
+# leg in `src/lib.rs`, so the pattern constructors are *labeled* with the feature
+# that carries them instead of silently appearing. Both targets are built because the
+# crate's risk surface is two hand-written kernels, and NEON is half of it.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [ "--cfg", "docsrs" ]
+targets = [ "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu" ]
+
+# The scan path is arithmetic and sixteen bytes of table, so the default build is a
+# convenience rather than a requirement. Turning the defaults off leaves a `no_std`
+# crate whose only dependency is on the skip path.
+[features]
+default = [ "std", "regex-automata" ]
+
+# Runtime facilities, none of which the sieve's arithmetic needs: `memchr`'s AVX2
+# dispatch (which is worth real throughput on x86_64 — without `std` it is limited to
+# SSE2, because runtime feature detection is what `std` is for) and `regex-automata`'s
+# own std leg. Note what is NOT here: the SSSE3 probe for this crate's own kernels is
+# hand-rolled off `CPUID` in `src/arch/mod.rs`, and `core::error::Error` covers the
+# error traits, so `no_std` costs no capability of sheng's own.
+std = [ "memchr/std", "regex-automata?/std" ]
+
+# The parser, and the `Dfa` impl for the engine that will run the confirming search.
+# Default because reading the real engine's automaton is the soundness argument, not a
+# convenience — but optional because nothing in it is on the scan path, so a caller
+# who builds sieves elsewhere and only runs them here pays for none of it.
+regex-automata = [ "dep:regex-automata" ]
 
 [dependencies]
-# The only dependency, and it is the point: sheng reads its automaton from
-# regex-automata's PUBLIC `thompson::NFA` surface rather than reimplementing a
-# parser, so a pattern means here exactly what it means to the engine that runs
-# the confirming search.
-regex-automata = { version = "0.4.16", default-features = false, features = [
-  "std",
+# Not a dependency of the sieve, of the arithmetic, or of the kernel — only of
+# `skip::Escape::Few`, the 1-to-3-byte searcher. Already in the graph under
+# regex-automata, `no_std`-capable, and nothing hand-rolled here would match its
+# tuning at that width — so the sieve borrows it rather than writing a fourth-best
+# memchr. `default-features = false` because the `std` leg is elected above.
+memchr = { version = "2.8.3", default-features = false }
+
+# Where a pattern is *parsed*, which is the one thing this crate refuses to do
+# itself: sheng reads its automaton from regex-automata's PUBLIC `dfa::Automaton`
+# surface rather than reimplementing a parser, so a pattern means here exactly what it
+# means to the engine that runs the confirming search. Optional, because that argument
+# is about the automaton rather than about whose crate built it — see `src/dfa.rs`.
+regex-automata = { version = "0.4.16", optional = true, default-features = false, features = [
+  "alloc",
   "syntax",
   "nfa-thompson",
   "dfa-build",
 ] }
 
-# The 1-to-3-byte searcher behind `skip::Escape::Few`. Already in the graph under
-# regex-automata, and nothing hand-rolled here would match its tuning at that width
-# — so the sieve borrows it rather than writing a fourth-best memchr.
-memchr = { version = "2.8.3", default-features = false, features = ["std"] }
-
+# Every example is an instrument pointed at a *pattern*, so each needs the leg that
+# can turn one into an automaton. Declared rather than inherited so
+# `--no-default-features` builds the library instead of failing on the examples.
 [[example]]
 name = "bench"
 path = "examples/bench.rs"
+required-features = [ "regex-automata" ]
 
 [[example]]
 name = "skip"
 path = "examples/skip.rs"
+required-features = [ "regex-automata" ]
 
 [[example]]
 name = "mint"
 path = "examples/mint.rs"
+required-features = [ "regex-automata" ]
 
 [[example]]
 name = "survey"
 path = "examples/survey.rs"
+required-features = [ "regex-automata" ]
 
 [dev-dependencies]
-# The soundness harness needs a full engine to disagree with.
+# The soundness harness needs a full engine to disagree with — and `dfa-search`, so it
+# can run the automaton the sieve only ever refuted.
 regex-automata = { version = "0.4.16", features = [
   "std",
   "syntax",

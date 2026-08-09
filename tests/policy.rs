@@ -5,18 +5,25 @@
 //! must decline rather than inherit somebody else's silicon, and a caller who has
 //! measured their own must be able to say so and be believed.
 
-use sheng::price::{Calibration, MACOS_AARCH64, MINTED, UNMEASURED};
+use sheng::price::{Calibration, MACOS_AARCH64_NEON, MINTED, UNMEASURED};
 use sheng::prior::{DEFAULT_CHAINS, SOURCE_BYTES};
 use sheng::shuffle::Kernel;
 use sheng::{BuildError, Gate, Policy, Sieve};
 
-/// Every pattern the survey arms, so a decline below is about the policy rather than
-/// about a pattern with no quotient.
+/// Patterns that harvest a register-sized quotient, so a decline below is about the
+/// policy rather than about a pattern with no quotient to price.
+///
+/// The last two arm under the shipped calibration and the first four do not, and both
+/// halves are load-bearing: a test that only ever saw declining patterns cannot tell a
+/// policy that declines from a policy that is never consulted, which is precisely how
+/// `longer_documents_are_harder_to_justify` went vacuous once before.
 const ARMING: &[&str] = &[
     r"(?-u)WalletService",
     r"(?-u)foo[^\n]*bar",
     r"(?-u)<[^>]*>",
     r"(?-u)\{[^\n]*\}",
+    r"(?-u)(alpha|beta|gamma)",
+    r"(?-u)[0-9]{3}-[0-9]{4}",
 ];
 
 fn with(calibration: Calibration) -> Policy<'static> {
@@ -35,10 +42,25 @@ fn an_unmeasured_machine_declines_instead_of_guessing() {
     for pattern in ARMING {
         match Sieve::with(pattern, &policy) {
             Err(BuildError::Uncalibrated { arch, kernel }) => {
-                assert_eq!(arch, std::env::consts::ARCH);
-                assert_eq!(kernel, sheng::shuffle::kernel());
+                assert_eq!(
+                    arch,
+                    std::env::consts::ARCH,
+                    "decline named the wrong architecture on {}",
+                    std::env::consts::OS
+                );
+                assert_eq!(
+                    kernel,
+                    sheng::shuffle::kernel(),
+                    "decline named the wrong kernel on {}/{}",
+                    std::env::consts::OS,
+                    std::env::consts::ARCH
+                );
             },
-            other => panic!("{pattern:?} must decline on an unmeasured machine, got {other:?}"),
+            other => panic!(
+                "{pattern:?} must decline on an unmeasured machine ({}/{}), got {other:?}",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            ),
         }
     }
 }
@@ -67,25 +89,34 @@ fn waiving_the_gate_still_builds_on_an_unmeasured_machine() {
 /// accelerator advantage left and a filter that the shipped calibration declines
 /// becomes worth arming.
 ///
-/// `[Ww]allet` used to be the pattern that moved. It now arms on both machines — the
-/// sieve learned to skip its own start block, so it no longer needs the engine to be
-/// handicapped to be worth it — which left this test asserting a real invariant over a
-/// set where nothing moved. A hex-literal scan carries the demonstration instead.
+/// `WalletService` is the demonstration again, and the round trip is the point. It
+/// stopped moving when the sieve learned to skip its own start block and armed on both
+/// machines; it moves once more now that [`sheng::price::MARGIN`] refuses the 1.01x
+/// that arming rested on. Which is the honest shape of the claim: the skip it learned
+/// buys nothing against an engine already `memchr`-ing the identical byte, and on
+/// silicon where that `memchr` is no faster than a walk the sieve does not need the
+/// skip at all — it wins 6.7x on the composition kernel alone.
+///
+/// The hex-literal scan it borrowed in the interim is *not* kept as a second case: it
+/// prices at 1.247x on the handicapped machine, inside the margin, and a test whose
+/// demonstration sits a thousandth from its own threshold is a test that will fail on
+/// somebody else's afternoon.
 #[test]
 fn a_caller_can_price_a_machine_the_crate_never_measured() {
     // A hypothetical target with no fast byte scan: skipping costs what walking costs.
     let flat = Calibration {
         arch: "hypothetical",
         dfa_skip: 1.274907,
-        ..MACOS_AARCH64
+        ..MACOS_AARCH64_NEON
     };
     let (mut moved, mut same) = (0, 0);
-    for pattern in [
+    let slate = [
+        r"(?-u)WalletService",
         r"(?-u)(alpha|beta|gamma)",
-        r"(?-u)#[0-9a-fA-F]{6}",
         r"(?-u)e[^\n]*q",
-    ] {
-        let shipped = Sieve::with(pattern, &with(MACOS_AARCH64));
+    ];
+    for pattern in slate {
+        let shipped = Sieve::with(pattern, &with(MACOS_AARCH64_NEON));
         let theirs = Sieve::with(pattern, &with(flat));
         if shipped.is_err() && theirs.is_ok() {
             moved += 1;
@@ -104,7 +135,7 @@ fn a_caller_can_price_a_machine_the_crate_never_measured() {
     // exposure at a compose price that does not depend on the coefficient at all,
     // while the rival's exposure has no such ceiling.
     assert!(
-        moved + same == 3,
+        moved + same == slate.len(),
         "a slower memchr must never *un*-arm a pattern"
     );
 }
@@ -210,6 +241,74 @@ fn longer_documents_are_harder_to_justify() {
         judged > 0,
         "no pattern armed at the nominal length, so nothing above was actually \
          compared — this test has gone vacuous again"
+    );
+}
+
+/// `skip.rs` states the rule in prose — "a rival already `memchr`-ing the identical
+/// byte cannot be beaten by a filter that has to find the same byte first" — and this
+/// is where it becomes enforced rather than believed.
+///
+/// It is deliberately **not** a code path. A hard "same set, therefore decline" would
+/// be wrong: the two loops search the same needle but excurse into different machines,
+/// the engine into a dense DFA whose table misses cache and the sieve into sixteen
+/// blocks already in registers, so a genuinely cheaper excursion is a genuinely
+/// cheaper sieve and forbidding it would forbid a real win. What the coinciding sets
+/// actually do is *cancel the streaming halves of the two prices*, leaving the whole
+/// verdict resting on the ratio of two excursion coefficients — and that ratio is
+/// 3.5% against a published spread of 21%. So the rule is not a veto, it is the reason
+/// [`sheng::price::MARGIN`] has to exist, and the assertion is that the margin
+/// catches it.
+///
+/// Both halves are checked. Asserting only the decline would pass just as well if the
+/// pattern declined for some unrelated reason, which would leave the interesting claim
+/// — that these are the same search twice — untested.
+#[test]
+fn a_skip_over_the_engine_s_own_accelerator_cannot_arm_on_the_excursion_ratio() {
+    use regex_automata::Input;
+    use regex_automata::dfa::{Automaton, dense};
+    use regex_automata::nfa::thompson;
+    use regex_automata::util::syntax;
+
+    if !sheng::price::active().is_measured() {
+        return; // covered by the unmeasured tests above
+    }
+    let mut checked = 0;
+    for pattern in [r"(?-u)WalletService", r"(?-u)foo[^\n]*bar"] {
+        let dfa = dense::Builder::new()
+            .syntax(syntax::Config::new().utf8(false))
+            .thompson(thompson::Config::new().utf8(false))
+            .build(pattern)
+            .expect("pattern builds");
+        let start = dfa
+            .start_state_forward(&Input::new(b""))
+            .expect("start state");
+        let mut accelerator = dfa.accelerator(start).to_vec();
+        accelerator.sort_unstable();
+        assert!(
+            !accelerator.is_empty(),
+            "{pattern:?}: the engine must accelerate, or there is no coincidence to test"
+        );
+
+        let core = sheng::Projection::of(&dfa).expect("projects");
+        for quotient in sheng::harvest(&core) {
+            let skip = sheng::Skip::of(&quotient.rows, quotient.start).expect("a skip exists");
+            assert_eq!(
+                skip.leaves(),
+                &accelerator[..],
+                "{pattern:?}: this test only says something while the two sets coincide"
+            );
+            checked += 1;
+        }
+
+        let cost = Sieve::with(pattern, &Policy::default()).map(|s| s.cost());
+        assert!(
+            matches!(cost, Err(BuildError::NotWorthIt(_))),
+            "{pattern:?}: searching the engine's own accelerator set must not arm, got {cost:?}"
+        );
+    }
+    assert!(
+        checked >= 2,
+        "only {checked} quotients — the slate harvested nothing"
     );
 }
 

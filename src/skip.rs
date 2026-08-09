@@ -52,6 +52,8 @@
 //! produce. A skip that overshoots one escape byte would make the sieve reject a
 //! document that matches, which is the one bug in this crate that is not survivable.
 
+use alloc::vec::Vec;
+
 /// Widest escape set the classifier will accept. Above this the set is closer to
 /// "most bytes" than to "a class", the runs between hits are too short for a
 /// vector probe to amortize, and the composition kernel is the better answer
@@ -185,7 +187,7 @@ impl Escape {
                 // high nibble is 8..=15, where `hi` is zero, which is why the set
                 // has to be ASCII for this to be the truth rather than a guess.
                 let mut lo = [0u8; 16];
-                let hi: [u8; 16] = std::array::from_fn(|h| if h < 8 { 1 << h } else { 0 });
+                let hi: [u8; 16] = core::array::from_fn(|h| if h < 8 { 1 << h } else { 0 });
                 for &b in escape {
                     lo[usize::from(b & 0xF)] |= 1 << (b >> 4);
                 }
@@ -204,23 +206,38 @@ impl Escape {
 /// [`crate::shuffle`]'s composition kernel.
 pub(crate) mod wide {
     use crate::arch;
+    // Named only by the vector arms below, so on a target with no byte shuffle there
+    // is no variant left to match and nothing to import.
+    #[cfg(any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "sse2")
+    ))]
+    use crate::arch::Kernel;
 
+    /// Dispatch reads [`arch::kernel`] rather than re-deriving the `cfg` ladder and
+    /// the feature probe, so this classifier and [`crate::shuffle::refutes`] can
+    /// never independently disagree about the target's silicon — which is the reason
+    /// [`crate::arch`] exists.
     pub fn find(lo: &[u8; 16], hi: &[u8; 16], hay: &[u8]) -> Option<usize> {
-        #[cfg(target_arch = "aarch64")]
-        // SAFETY: NEON is baseline on every aarch64 target, so the `cfg` is the
-        // whole precondition; the loads below are bounded by `chunks_exact`.
-        return unsafe { arch::neon::classify(lo, hi, hay) };
-
-        #[cfg(target_arch = "x86_64")]
-        if std::arch::is_x86_feature_detected!("ssse3") {
-            // SAFETY: guarded by the probe on the line above.
-            unsafe { arch::ssse3::classify(lo, hi, hay) }
-        } else {
-            scalar(lo, hi, hay)
+        match arch::kernel() {
+            #[cfg(target_arch = "aarch64")]
+            // SAFETY: this arm is only reachable under `#[cfg(target_arch =
+            // "aarch64")]`, where NEON is baseline — exactly `arch::neon::classify`'s
+            // own precondition.
+            Kernel::Neon => unsafe { arch::neon::classify(lo, hi, hay) },
+            #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+            // SAFETY: `kernel()` names `Avx2` only where the probe confirmed the
+            // silicon, `OSXSAVE` and `XCR0` — exactly `arch::avx2::classify`'s own
+            // precondition. `arch::force` can only name a kernel that same probe
+            // admitted.
+            Kernel::Avx2 => unsafe { arch::avx2::classify(lo, hi, hay) },
+            #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+            // SAFETY: `kernel()` returns `Ssse3` only after its `CPUID` probe
+            // confirmed the CPU has it — exactly `arch::ssse3::classify`'s own
+            // precondition.
+            Kernel::Ssse3 => unsafe { arch::ssse3::classify(lo, hi, hay) },
+            _ => scalar(lo, hi, hay),
         }
-
-        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-        scalar(lo, hi, hay)
     }
 
     /// The meaning of the two tables, spelled out once.
@@ -232,17 +249,29 @@ pub(crate) mod wide {
         hay.iter().position(|&b| member(lo, hi, b))
     }
 
-    /// The `hay.len() % STEP` bytes no whole vector step covers. Called back into
-    /// from both vector classifiers in [`crate::arch`], so the tail is defined once
-    /// against the same reference `scalar` the differential tests hold them to.
-    pub(crate) fn tail(lo: &[u8; 16], hi: &[u8; 16], hay: &[u8]) -> Option<usize> {
-        let done = hay.len() - hay.len() % arch::STEP;
+    /// The `hay.len() % step` bytes no whole vector step covers. Called back into from
+    /// every vector classifier in [`crate::arch`], so the tail is defined once against
+    /// the same reference `scalar` the differential tests hold them to — and therefore
+    /// present only where one of them is.
+    ///
+    /// `step` is passed in rather than read from [`arch::STEP`] because the classifiers
+    /// no longer share one width: a 256-bit step leaves a different remainder than a
+    /// 128-bit one, and a tail that assumed the narrower would silently drop up to
+    /// sixteen bytes of the wider kernel's haystack.
+    #[cfg(any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "sse2")
+    ))]
+    pub(crate) fn tail(lo: &[u8; 16], hi: &[u8; 16], hay: &[u8], step: usize) -> Option<usize> {
+        let done = hay.len() - hay.len() % step;
         scalar(lo, hi, &hay[done..]).map(|i| done + i)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
     use super::*;
 
     /// Every set shape the classifier claims, plus the two it must refuse.
