@@ -8,7 +8,10 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let sieve = sheng::Sieve::new(r"(?-u)WalletService")?;
+//! use sheng::Residency;
+//!
+//! // The regime has no default: only the caller knows where their bytes come from.
+//! let sieve = sheng::Sieve::new(r"(?-u)WalletService", Residency::Memory)?;
 //! for doc in std::iter::empty::<&[u8]>() {
 //!     if sieve.refutes(doc) {
 //!         continue; // proven match-free; no engine runs
@@ -90,8 +93,11 @@
 //! opposite directions — so [`price::MINTED`] keeps one row per (architecture, kernel)
 //! pair that has actually been measured, and a machine absent from it gets
 //! [`BuildError::Uncalibrated`] rather than another machine's optimism. The shipped
-//! [`prior`] describes a polyglot source tree; a caller whose corpus is prose, logs or
-//! DNA mints their own and passes it in.
+//! [`prior`] set spans four measured corpora — a polyglot code tree, English prose,
+//! machine-generated JSON, sixteen systems' logs — swept together, because the gate
+//! takes the worst case over them and a caller who has not said what they are
+//! searching should be priced under all four. A caller who *has* narrows to the one
+//! that fits; a corpus none of them describe (DNA, a wire protocol) mints its own.
 //!
 //! # What this crate needs to exist
 //!
@@ -139,6 +145,7 @@ mod skip;
 pub use dfa::Dfa;
 pub use error::BuildError;
 pub use lattice::{MAX_CONJUNCTS, Quotient, harvest};
+pub use price::Residency;
 pub use projection::{Decline, Projection};
 pub use selectivity::worst_case;
 pub use skip::{Instrument, Skip};
@@ -190,15 +197,18 @@ impl Lane {
     /// engine's accelerator — a skip loop is an accelerated DFA, so there is one
     /// shape of arithmetic here rather than a second cost model to keep honest.
     fn plan(quotient: Quotient, policy: &Policy<'_>, compose: f64) -> (Self, f64) {
-        let usable =
-            policy.skip && policy.calibration.is_measured() && quotient.start < quotient.threshold;
+        let usable = policy.skip
+            && policy.calibration.is_measured(policy.residency)
+            && quotient.start < quotient.threshold;
         // Every condition is checked before `Skip::of` reads 256 rows and allocates,
         // so a conjunct the policy already ruled out costs nothing to rule out.
         let priced = usable
             .then(|| Skip::of(&quotient.rows, quotient.start))
             .flatten()
             .map(|s| {
-                let cost = policy.calibration.skip_per_byte(&s, policy.freq);
+                let cost = policy
+                    .calibration
+                    .skip_per_byte(&s, policy.freq, policy.residency);
                 (s, cost)
             });
         let (skip, cost) = match priced {
@@ -249,32 +259,51 @@ pub enum Gate {
 /// Every empirical fact the arming decision rests on, in one replaceable place.
 ///
 /// The quotient construction and the kernel are mathematics and instructions — they
-/// hold everywhere. The *decision to use them* rests on two measurements that are
-/// nobody's universal constants: how fast this machine runs three loops, and what the
-/// bytes being searched look like. [`Policy::default`] fills both with the best
-/// answers this crate shipped with — a calibration matched to the running machine (or
-/// [`price::UNMEASURED`], which declines everything) and priors measured over a
-/// polyglot source tree.
+/// hold everywhere. The *decision to use them* rests on measurements that are nobody's
+/// universal constants: how fast this machine runs three loops, what the bytes being
+/// searched look like, and where those bytes are coming from. [`Policy::new`] fills the
+/// first two with the best answers this crate shipped with — a calibration matched to
+/// the running machine (or [`price::UNMEASURED`], which declines everything) and the
+/// four measured corpora of [`prior::DEFAULT_CHAINS`] swept together — and takes the
+/// third as its one argument, because it is the one nothing here can determine.
 ///
-/// A caller whose corpus is not source code, or whose silicon is not in
-/// [`price::MINTED`], overrides the field that is wrong rather than living with a
-/// default that quietly describes someone else's laptop:
+/// There is deliberately **no `Default`**. Two of these fields describe facts this
+/// crate can probe, and [`Residency`] describes one it cannot: whether the caller's
+/// haystacks are arriving from cache or from main memory changes which patterns pay by
+/// more than 2x, and guessing it silently is how `panic!\(` came to be armed at a
+/// predicted 1.33x and measured 0.59x. A caller states it or gets no sieve.
+///
+/// A caller whose silicon is not in [`price::MINTED`], or who knows something about
+/// their corpus the shipped sweep does not, overrides the field that is wrong rather
+/// than living with a shipped answer that quietly describes someone else's laptop:
 ///
 /// ```no_run
-/// # use sheng::{Policy, Sieve};
-/// let mut policy = Policy::default();
+/// # use sheng::{Policy, Residency, Sieve, prior::{self, Prior}};
+/// let mut policy = Policy::new(Residency::Memory); // a corpus larger than cache
 /// policy.len = 4096.0; // documents are smaller here than the 64 KiB nominal
+/// // Searching logs and nothing else: one measured corpus instead of the worst of
+/// // four, which is the only thing that ever *loosens* the gate.
+/// let logs = [Prior::Log.chain()];
+/// policy.chains = &logs;
+/// policy.freq = &prior::LOG_BYTES;
 /// let sieve = Sieve::with(r"\bTODO\b", &policy);
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct Policy<'a> {
     /// Measured per-byte times for this machine. See [`price::active`].
     pub calibration: Calibration,
+    /// Where the bytes about to be searched are coming from — the caller's fact, and
+    /// the only one in here with no shipped answer. See [`Residency`].
+    pub residency: Residency,
     /// Byte-generating models the fallthrough is judged against; the gate takes the
-    /// worst, so more chains can only make it stricter.
+    /// worst, so more chains can only make it stricter. [`prior::Prior::chain`] names
+    /// the measured ones individually.
     pub chains: &'a [Chain],
     /// Byte marginals the rival engine's escape set is priced under — how often the
-    /// engine's `memchr` will actually trip on the corpus being searched.
+    /// engine's `memchr` will actually trip on the corpus being searched. One table
+    /// rather than a swept set, because this term prices the *rival*: the pessimistic
+    /// reading is the one where the engine skips most, so a worst case here would be a
+    /// best case for the sieve. [`prior::Prior::byte_freq`] has one per corpus.
     pub freq: &'a [f64; 256],
     /// Nominal haystack length the one-time survival cost is amortized over.
     pub len: f64,
@@ -291,10 +320,21 @@ pub struct Policy<'a> {
     pub skip: bool,
 }
 
-impl Default for Policy<'_> {
-    fn default() -> Self {
+impl Policy<'_> {
+    /// The shipped answers for everything this crate can measure, and the caller's
+    /// answer for the one thing it cannot.
+    ///
+    /// This replaces the `Default` impl rather than joining it. `Default` would have to
+    /// pick a [`Residency`], and both choices are wrong in a way that matters: assuming
+    /// [`Residency::Memory`] arms patterns that lose on a cache-resident corpus, and
+    /// assuming [`Residency::Cache`] silently withholds real speedups from the callers
+    /// this crate is best at. Neither is a default so much as an unstated guess about
+    /// somebody else's workload.
+    #[must_use]
+    pub fn new(residency: Residency) -> Self {
         Self {
-            calibration: price::active(),
+            calibration: price::active(residency),
+            residency,
             chains: &prior::DEFAULT_CHAINS,
             freq: &prior::SOURCE_BYTES,
             len: price::NOMINAL_LEN,
@@ -314,20 +354,28 @@ impl Sieve {
     /// `utf8(false)` is set on both the syntax and NFA legs so a byte-oriented
     /// pattern (`(?-u)…`) is buildable — a sieve reasons over bytes, and a
     /// pattern that can match invalid UTF-8 is a legitimate thing to filter for.
-    pub fn new(pattern: &str) -> Result<Self, BuildError> {
-        Self::with(pattern, &Policy::default())
+    ///
+    /// `residency` has no default because nothing here can determine it; see
+    /// [`Residency`] and [`Policy::new`].
+    pub fn new(pattern: &str, residency: Residency) -> Result<Self, BuildError> {
+        Self::with(pattern, &Policy::new(residency))
     }
 
     /// Build a sieve regardless of whether it pays. For differential oracles and
     /// for calibration, which have to be able to time a kernel the gate would
     /// refuse — including on a machine nothing has been measured on. Not what a
     /// production caller wants.
+    ///
+    /// Takes no [`Residency`], and cannot need one: a residency selects which column
+    /// of a calibration the *gate* reads, and this is the constructor that does not
+    /// consult the gate. It prices against [`Residency::Memory`] so the arithmetic it
+    /// retains is still readable, and that arithmetic decides nothing.
     pub fn ungated(pattern: &str) -> Result<Self, BuildError> {
         Self::with(
             pattern,
             &Policy {
                 gate: Gate::Ungated,
-                ..Policy::default()
+                ..Policy::new(Residency::Memory)
             },
         )
     }
@@ -358,15 +406,16 @@ impl Sieve {
     /// This is the constructor with no parser behind it, and the only one a `no_std`
     /// build has. See [`Dfa`] for what an automaton has to be able to answer, and for
     /// the obligation a caller takes on by answering it.
-    pub fn of_dfa<D: Dfa>(dfa: &D) -> Result<Self, BuildError> {
-        Self::of_dfa_with(dfa, &Policy::default())
+    pub fn of_dfa<D: Dfa>(dfa: &D, residency: Residency) -> Result<Self, BuildError> {
+        Self::of_dfa_with(dfa, &Policy::new(residency))
     }
 
-    /// [`Sieve::of_dfa`] with an explicit [`Policy`] rather than [`Policy::default`].
+    /// [`Sieve::of_dfa`] with a [`Policy`] the caller assembled rather than one
+    /// [`Policy::new`] filled in.
     pub fn of_dfa_with<D: Dfa>(dfa: &D, policy: &Policy<'_>) -> Result<Self, BuildError> {
         // Refuse before doing any work rather than after: an unmeasured machine cannot
         // be talked into a speedup by a well-shaped automaton.
-        if policy.gate == Gate::Worth && !policy.calibration.is_measured() {
+        if policy.gate == Gate::Worth && !policy.calibration.is_measured(policy.residency) {
             return Err(BuildError::Uncalibrated {
                 arch: price::ARCH,
                 kernel: shuffle::kernel(),
@@ -476,9 +525,9 @@ fn rival_cost<D: Dfa>(dfa: &D, policy: &Policy<'_>) -> f64 {
     let Some(start) = dfa.start() else {
         // Cannot tell what the engine will do, so assume the best case for it and let
         // the sieve stand down.
-        return policy.calibration.dfa_skip;
+        return policy.calibration.dfa_skip[policy.residency as usize];
     };
     policy
         .calibration
-        .rival_per_byte(dfa.accelerator(start), policy.freq)
+        .rival_per_byte(dfa.accelerator(start), policy.freq, policy.residency)
 }

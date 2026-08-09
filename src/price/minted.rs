@@ -1,7 +1,7 @@
 //! The measured evidence: one [`Calibration`] row per (architecture, kernel) pair
 //! anybody has actually timed, plus the fail-safe row for everyone else.
 
-use super::calibration::Calibration;
+use super::calibration::{Calibration, REGIMES};
 use crate::lattice::MAX_CONJUNCTS;
 use crate::shuffle::Kernel;
 
@@ -56,20 +56,54 @@ use crate::shuffle::Kernel;
 /// instrument on consecutive runs. The higher pair is the one recorded, because an
 /// overstated excursion can only decline a skip.
 ///
-/// `dfa_excursion` still carries its pre-pairing value and is the coefficient most
-/// likely to move on the next full re-mint: measured unpaired it drifts ~21% run to
-/// run on this machine. It is left alone rather than half-corrected, for the
-/// two-afternoons reason above — re-mint the row whole.
+/// **Re-minted whole 2026-08-09**, for the residency columns. Two coefficients here now
+/// carry a [`Residency`](super::Residency) index, and the measurement that earned them
+/// is the reason the row could not simply be extended in place:
+///
+/// | | cache (1 MiB) | memory (64 MiB) |
+/// |---|---|---|
+/// | `dfa_skip` | 0.0124 | 0.0175 |
+/// | `dfa_excursion` | 8.06 | 9.75 |
+///
+/// A `memchr` is **41% cheaper** per byte once the bytes are already resident, and a
+/// dense-DFA re-entry 21% cheaper. Both were reproduced across the run's two kernel
+/// passes (0.0124/0.0170 and 7.67/9.64), and the memory-resident `dfa_excursion` of
+/// 9.751 reproduces the 9.7495 this row carried before residency existed — which is the
+/// cross-check that says the new column is new information rather than a re-labeled old
+/// number.
+///
+/// `dfa_walk` and `sieve` carry no index, and that is a claim: a dependent-load walk
+/// waits on L1 for a table it has already pulled in, and the composition kernel is
+/// issue-bound at three operations a byte. Neither has headroom a hotter haystack could
+/// give it. `skip_excursion` is indexed for symmetry and is **not** expected to move —
+/// it re-enters sixteen blocks resident in either regime — and indeed instrument 1 came
+/// out inverted (7.79 cache against 6.96 memory), inside the spread of a coefficient
+/// minted as a maximum over a five-pattern slate.
+///
+/// # The mint can be fooled, and was
+///
+/// This column pair read *identical to four decimal places* on the first attempt, which
+/// looked exactly like the finding "residency does not matter on this silicon". It was
+/// not a finding. `mint` was aimed at this repository, which is **0.5 MiB**, so the
+/// 64 MiB request and the 1 MiB request both came back holding every byte in the tree:
+/// the two columns were the same bytes timed twice. `examples/mint.rs` now refuses a
+/// corpus under 32 MiB outright rather than printing a row that says the memory system
+/// does not exist — a row is a claim about a memory system, and a mint that never
+/// reached memory has no business making one.
+///
+/// The same trap explains a 30% "drift" that briefly looked like this row going stale.
+/// A cache-resident mint reads `dfa_excursion` near 6.7-8.1 and the shipped row said
+/// 9.75; the row was right, and the re-mint was measuring the other regime.
 pub const MACOS_AARCH64_NEON: Calibration = Calibration {
     arch: "aarch64",
     kernel: Kernel::Neon,
     host: "macos aarch64 · 16 logical cores · Neon kernel",
-    minted: "2026-08-03",
-    dfa_skip: 0.015817,
-    dfa_walk: 1.262153,
-    dfa_excursion: 9.749545,
-    skip_excursion: [9.410733, 6.822599],
-    sieve: [0.0, 0.188196],
+    minted: "2026-08-09",
+    dfa_skip: [0.012390, 0.017507],
+    dfa_walk: 1.313341,
+    dfa_excursion: [8.057903, 9.751283],
+    skip_excursion: [[7.611088, 9.647507], [7.788777, 6.963965]],
+    sieve: [0.0, 0.196478],
 };
 
 /// Native x86_64 Linux on an idle 13th-gen Intel box, 20 logical cores.
@@ -96,10 +130,15 @@ pub const LINUX_X86_64_SSSE3: Calibration = Calibration {
     kernel: Kernel::Ssse3,
     host: "linux x86_64 · 20 logical cores · Ssse3 kernel",
     minted: "2026-08-03",
-    dfa_skip: 0.012845,
+    // Not yet timed in the cache-resident regime — this box is not here to run a mint
+    // on. Zero reads as unmeasured, so an `x86_64` caller declaring `Residency::Cache`
+    // gets `Uncalibrated` rather than these memory-resident numbers, which is the same
+    // refusal the crate makes about a machine it has never seen. `.github/workflows/mint.yml`
+    // is where the pair gets filled in.
+    dfa_skip: [0.0, 0.012845],
     dfa_walk: 1.251617,
-    dfa_excursion: 11.554774,
-    skip_excursion: [8.849832, 7.255182],
+    dfa_excursion: [0.0, 11.554774],
+    skip_excursion: [[0.0, 8.849832], [0.0, 7.255182]],
     sieve: [0.0, 0.218482],
 };
 
@@ -119,10 +158,10 @@ pub const UNMEASURED: Calibration = Calibration {
     kernel: Kernel::Scalar,
     host: "no machine — nothing here was measured",
     minted: "never",
-    dfa_skip: 0.0,
+    dfa_skip: [0.0; REGIMES],
     dfa_walk: 0.0,
-    dfa_excursion: 0.0,
-    skip_excursion: [0.0; 2],
+    dfa_excursion: [0.0; REGIMES],
+    skip_excursion: [[0.0; REGIMES]; 2],
     sieve: [0.0; MAX_CONJUNCTS],
 };
 
@@ -163,6 +202,7 @@ pub const MINTED: &[Calibration] = &[MACOS_AARCH64_NEON, LINUX_X86_64_SSSE3];
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::price::Residency;
     use crate::prior;
 
     /// Every row must describe a machine that could exist, and no two rows may claim
@@ -171,7 +211,11 @@ mod tests {
     #[test]
     fn the_minted_rows_are_distinct_and_self_describing() {
         for (i, cal) in MINTED.iter().enumerate() {
-            assert!(cal.is_measured(), "{} row {i} measured nothing", cal.arch);
+            assert!(
+                Residency::ALL.iter().any(|&at| cal.is_measured(at)),
+                "{} row {i} measured nothing in any regime",
+                cal.arch
+            );
             assert!(
                 cal.kernel.is_vector(),
                 "a scalar-kernel row would price the vector economics wrongly"
@@ -222,22 +266,36 @@ mod tests {
 
     /// The measurement that decides where this crate is useful: the engine's skip is
     /// an order of magnitude faster than the sieve, and its walk is slower. Asserted
-    /// of **every** minted machine, so new silicon either reproduces the bracket or
-    /// says out loud that the economics there are different.
+    /// of **every** minted machine and every regime it claims, so new silicon either
+    /// reproduces the bracket or says out loud that the economics there are different.
+    ///
+    /// The bracket is what makes residency a dimension rather than a rescaling. It has
+    /// to hold in both regimes — a `memchr` that ever became *slower* than the
+    /// composition kernel would invert the whole cost model — and yet the width of it
+    /// is exactly what a regime changes, since the skip end moves with the memory system
+    /// while both other ends do not.
     #[test]
     fn every_minted_machine_brackets_the_sieve_between_skip_and_walk() {
+        let mut swept = 0;
         for cal in MINTED {
             let sieve = cal.sieve_per_byte(MAX_CONJUNCTS);
             let (arch, host) = (cal.arch, cal.host);
             assert!(
-                cal.dfa_skip < sieve,
-                "{arch}: no per-byte filter can front a memchr ({host})"
-            );
-            assert!(
                 sieve < cal.dfa_walk,
                 "{arch}: but it does beat a per-byte walk ({host})"
             );
+            for at in Residency::ALL {
+                if !cal.is_measured(at) {
+                    continue;
+                }
+                swept += 1;
+                assert!(
+                    cal.dfa_skip[at as usize] < sieve,
+                    "{arch} in {at:?}: no per-byte filter can front a memchr ({host})"
+                );
+            }
         }
+        assert!(swept > 0, "no minted row claimed any regime");
     }
 
     /// A rare lead byte makes the engine unbeatable and a common one makes it barely
@@ -248,22 +306,68 @@ mod tests {
     fn a_rarer_accelerator_prices_the_rival_cheaper() {
         let freq = prior::Prior::Source.byte_freq();
         for cal in MINTED {
-            let rare = cal.rival_per_byte(b"W", &freq);
-            let common = cal.rival_per_byte(b"e", &freq);
-            let none = cal.rival_per_byte(b"", &freq);
+            for at in Residency::ALL {
+                if !cal.is_measured(at) {
+                    continue;
+                }
+                let rare = cal.rival_per_byte(b"W", &freq, at);
+                let common = cal.rival_per_byte(b"e", &freq, at);
+                let none = cal.rival_per_byte(b"", &freq, at);
+                let arch = cal.arch;
+                assert!(
+                    rare < common,
+                    "{arch} in {at:?}: a rare escape byte is a cheaper engine: {rare} vs {common}"
+                );
+                assert!(
+                    common <= none,
+                    "{arch} in {at:?}: no accelerator can cost more than plain walking"
+                );
+                assert!(
+                    rare < cal.sieve_per_byte(MAX_CONJUNCTS),
+                    "{arch} in {at:?}: a rare-anchored engine must out-price the sieve, \
+                     or nothing declines"
+                );
+            }
+        }
+    }
+
+    /// The direction the regime moves things, pinned so a re-mint cannot quietly invert
+    /// it: a cache-resident haystack makes the *engine* cheaper, never the sieve.
+    ///
+    /// This is the finding that forced the dimension, and it is worth an assertion
+    /// rather than only a paragraph. Both regime-indexed coefficients describe reaching
+    /// memory — a `memchr` stream and a dense-DFA re-entry — so a row where either grew
+    /// on the way into cache would be a row measured through something other than the
+    /// memory system, which is the most likely way for a future mint to be wrong.
+    #[test]
+    fn a_cache_resident_haystack_only_ever_cheapens_the_engine() {
+        let (cache, memory) = (Residency::Cache as usize, Residency::Memory as usize);
+        let mut compared = 0;
+        for cal in MINTED {
+            if !(cal.is_measured(Residency::Cache) && cal.is_measured(Residency::Memory)) {
+                continue;
+            }
+            compared += 1;
             let arch = cal.arch;
             assert!(
-                rare < common,
-                "{arch}: a rare escape byte is a cheaper engine: {rare} vs {common}"
+                cal.dfa_skip[cache] <= cal.dfa_skip[memory],
+                "{arch}: a memchr cannot be slower with the bytes already in cache"
             );
             assert!(
-                common <= none,
-                "{arch}: no accelerator can cost more than plain walking"
+                cal.dfa_excursion[cache] <= cal.dfa_excursion[memory],
+                "{arch}: re-entering a resident DFA cannot cost more than a cold one"
             );
-            assert!(
-                rare < cal.sieve_per_byte(MAX_CONJUNCTS),
-                "{arch}: a rare-anchored engine must out-price the sieve, or nothing declines"
-            );
+            // `skip_excursion` is deliberately **not** held to this. Both columns of it
+            // re-enter a sixteen-block quotient that is resident in either regime, so
+            // the physics predicts no gap — and it is minted as a *maximum* over a
+            // five-pattern slate, which is a noisy statistic by construction. Measured,
+            // instrument 1 comes out 7.79 in cache against 6.96 in memory: an inversion,
+            // and one well inside the spread of the coefficient it belongs to. Asserting
+            // a direction there would be asserting the absence of noise.
         }
+        assert!(
+            compared > 0,
+            "no row holds both regimes yet — nothing above was actually compared"
+        );
     }
 }

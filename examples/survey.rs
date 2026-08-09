@@ -15,6 +15,19 @@
 //! A corpus small enough that the two arms overlap cannot say which is faster, so this
 //! declines to judge rather than reporting the clock's own noise as a model error —
 //! the same posture the library takes on a machine it has no calibration for.
+//!
+//! The **regime is read off the corpus**, not configured: this example knows how many
+//! bytes it is about to hand the engine, so it declares `Residency::Cache` or
+//! `Residency::Memory` to `Policy` accordingly. That is worth knowing about the two
+//! numbers this prints, because it used to refuse outright below 8 MiB — a corpus that
+//! fits in cache never reads from memory, and a per-byte price measured against memory
+//! could not describe it. Running this against a small tree and a large one now
+//! exercises two columns of one calibration rather than one column and a disclaimer.
+//!
+//! `SHENG_SURVEY_REQUIRE_CORPUS=1` turns "declined to judge" into a hard failure — the
+//! knob CI's native matrix sets so a corpus checkout that silently shrank cannot pass by
+//! having nothing to judge, without forcing that same posture on a human running this
+//! against whatever tree they happen to be standing in.
 
 use std::time::Instant;
 
@@ -24,6 +37,7 @@ use regex_automata::nfa::thompson;
 use regex_automata::util::syntax;
 
 use sheng::Sieve;
+use sheng::price::Residency;
 
 mod common;
 
@@ -52,16 +66,20 @@ const ROUNDS: usize = 5;
 /// the quantity a verdict has to clear.
 const SAMPLES: usize = 5;
 
-/// The corpus volume below which this refuses to judge the model at all.
+/// The corpus volume above which a scan is reading from memory rather than from cache.
 ///
-/// Not a noise threshold — repeating a small measurement makes it precise, not valid.
-/// A calibration in `price` is nanoseconds per byte read from memory, and a corpus that
-/// fits in cache never reads from memory: at a few hundred kilobytes the engine's own
-/// `memchr` accelerator runs at tens of gigabytes a second and beats every per-byte
-/// price the crate knows, so a sieve loses on arithmetic that has nothing to do with the
-/// sieve. Eight mebibytes is past the last-level cache of the machines this ships for,
+/// Eight mebibytes is past the last-level cache of the machines `price::MINTED` names,
 /// which is the only property that matters here.
-const JUDGEABLE: usize = 8 << 20;
+///
+/// This constant used to be the volume below which this example **refused to judge the
+/// model at all**, and the refusal was correct at the time: a calibration was
+/// nanoseconds per byte read from memory, so a corpus that never read from memory was
+/// outside the model's domain and a loss there was not evidence against it. That is
+/// what `price::Residency` fixed. The threshold now *selects* which column of the
+/// calibration the gate reads, so a small corpus is a regime this example can price
+/// instead of one it has to decline — which is the entire difference between a model
+/// with a documented blind spot and a model with a dimension.
+const RESIDENT_ABOVE: usize = 8 << 20;
 
 fn matcher(pattern: &str) -> dense::DFA<Vec<u32>> {
     dense::Builder::new()
@@ -94,8 +112,17 @@ fn matches(dfa: &dense::DFA<Vec<u32>>, hay: &[u8]) -> bool {
 fn main() {
     let docs = common::corpus_files(3000);
     let bytes: usize = docs.iter().map(Vec::len).sum();
+    // The regime is read off the corpus rather than configured, because here it is a
+    // measurable fact: this example knows exactly how many bytes it is about to hand the
+    // engine and how many times. A library caller has to declare it because the library
+    // does not get to see the corpus.
+    let residency = if bytes > RESIDENT_ABOVE {
+        Residency::Memory
+    } else {
+        Residency::Cache
+    };
     println!(
-        "{} documents · {:.1} MiB · {SAMPLES} samples of min-of-{ROUNDS}\n",
+        "{} documents · {:.1} MiB · {residency:?}-resident · {SAMPLES} samples of min-of-{ROUNDS}\n",
         docs.len(),
         bytes as f64 / (1 << 20) as f64
     );
@@ -111,7 +138,7 @@ fn main() {
     // the real seam, and this only spells it.
     let policy = sheng::Policy {
         skip: std::env::var_os("SHENG_NO_SKIP").is_none(),
-        ..sheng::Policy::default()
+        ..sheng::Policy::new(residency)
     };
     println!("skip kernel: {}", if policy.skip { "on" } else { "off" });
 
@@ -163,6 +190,33 @@ fn main() {
         armed.push(row);
     }
 
+    // A corpus in a regime this machine has no column for is the one case still outside
+    // the model's domain — and it is now a statement about the *mint* rather than about
+    // the corpus. The refusal is kept for exactly that case, because a measurement the
+    // calibration cannot price is still not evidence against the calibration. Checked
+    // before the census below, since an unpriced regime declines every pattern and
+    // "the cost gate has closed entirely" would be a true sentence about the wrong thing.
+    if !sheng::price::active(residency).is_measured(residency) {
+        let verdict = format!(
+            "no verdict: {:.1} MiB is {residency:?}-resident, and no row is minted for \
+             this machine in that regime — so every pattern above declined for want of a \
+             price rather than for want of a speedup. Mint it with `cargo run --release \
+             --example mint`, or aim $SHENG_CORPUS at a corpus in a regime that is.",
+            bytes as f64 / (1 << 20) as f64
+        );
+        // A human running this against whatever tree they happen to be sitting in should
+        // get a friendly refusal to judge, not a panic. A CI leg whose pinned corpus
+        // checkout silently shrank should not get to call that refusal a pass — this is
+        // the one knob that turns "declined to judge" into the failure it would be if it
+        // happened on purpose.
+        assert!(
+            std::env::var_os("SHENG_SURVEY_REQUIRE_CORPUS").is_none(),
+            "{verdict}"
+        );
+        println!("{verdict}");
+        return;
+    }
+
     assert!(
         !armed.is_empty(),
         "no pattern armed — the cost gate has closed entirely"
@@ -172,23 +226,6 @@ fn main() {
         "\ngeomean end to end over {} armed patterns: {geo:.3}x",
         armed.len()
     );
-
-    // Two things have to hold before a verdict means anything: the corpus has to be in
-    // the regime the prices describe, and the row's two arms have to separate. Neither
-    // is a softening of the gate — a measurement outside the model's domain is not
-    // evidence against the model, and the crate declines an unmeasured machine for the
-    // same reason.
-    if bytes < JUDGEABLE {
-        println!(
-            "no verdict: {:.1} MiB is under the {} MiB this needs to judge anything. A \
-             corpus this small is cache-resident, so the ratios above price the engine's \
-             accelerator against L2 bandwidth rather than the memory the calibration was \
-             minted over. Aim $SHENG_CORPUS at a real tree.",
-            bytes as f64 / (1 << 20) as f64,
-            JUDGEABLE >> 20
-        );
-        return;
-    }
 
     // The gate's whole claim, audited against the clock. Arming is a prediction that
     // this row will come out above 1.000x, and a row that loses by more than its own

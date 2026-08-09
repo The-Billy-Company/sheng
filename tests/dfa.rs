@@ -18,7 +18,7 @@
 //! `{{0,1},{2,3}}` is closed under the transition function by construction and the
 //! harvest cannot come back empty for a reason that has nothing to do with the trait.
 
-use sheng::price::{MACOS_AARCH64_NEON, UNMEASURED};
+use sheng::price::{MACOS_AARCH64_NEON, Residency, UNMEASURED};
 use sheng::{Dfa, Gate, Policy, Sieve};
 
 /// Unanchored "contains an ASCII digit", as a hand-written transition table.
@@ -119,7 +119,7 @@ fn haystacks() -> Vec<Vec<u8>> {
 fn a_hand_written_automaton_drives_the_whole_pipeline() {
     let policy = Policy {
         gate: Gate::Ungated,
-        ..Policy::default()
+        ..Policy::new(Residency::Memory)
     };
     let dfa = Digits {
         accelerator: b"0123456789",
@@ -226,7 +226,7 @@ fn the_trait_can_decline_on_the_callers_behalf() {
 
     let policy = Policy {
         gate: Gate::Ungated,
-        ..Policy::default()
+        ..Policy::new(Residency::Memory)
     };
     for outcome in [
         Sieve::of_dfa_with(&Quitting, &policy),
@@ -251,7 +251,7 @@ fn the_accelerator_a_caller_reports_reaches_the_rivals_price() {
     let policy = Policy {
         calibration: MACOS_AARCH64_NEON,
         gate: Gate::Ungated,
-        ..Policy::default()
+        ..Policy::new(Residency::Memory)
     };
     let priced = |accelerator: &'static [u8]| {
         Sieve::of_dfa_with(&Digits { accelerator }, &policy)
@@ -278,7 +278,7 @@ fn a_callers_automaton_is_gated_like_any_other() {
     let dfa = Digits { accelerator: &[] };
     let unmeasured = Policy {
         calibration: UNMEASURED,
-        ..Policy::default()
+        ..Policy::new(Residency::Memory)
     };
     match Sieve::of_dfa_with(&dfa, &unmeasured) {
         Err(sheng::BuildError::Uncalibrated { arch, kernel }) => {

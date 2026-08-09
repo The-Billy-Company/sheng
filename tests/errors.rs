@@ -17,7 +17,7 @@
 use regex_automata::dfa::dense;
 use regex_automata::nfa::thompson;
 use regex_automata::util::syntax;
-use sheng::price::CostFact;
+use sheng::price::{CostFact, Residency};
 use sheng::{BuildError, Decline, Sieve};
 
 /// xorshift64*, matching `tests/soundness.rs` — a failure is reproducible from its
@@ -148,7 +148,7 @@ fn sieve_construction_never_panics_on_arbitrary_patterns() {
         } else {
             garbage_pattern(&mut rng)
         };
-        let outcome = silently(|| Sieve::new(&pattern));
+        let outcome = silently(|| Sieve::new(&pattern, Residency::Memory));
         let result = match outcome {
             Ok(result) => result,
             Err(_) => panic!("Sieve::new panicked on pattern {pattern:?} (round {round})"),
@@ -209,7 +209,7 @@ fn quit_bytes_are_reachable_through_a_callers_own_dfa() {
         .thompson(thompson::Config::new().utf8(false))
         .build(r"(?-u)foo[\x00-\xff]+bar")
         .expect("a quit-byte config still builds a DFA");
-    match Sieve::of_dfa(&dfa) {
+    match Sieve::of_dfa(&dfa, Residency::Memory) {
         Err(BuildError::Shape(Decline::Quits)) => {},
         other => panic!("expected Shape(Quits), got {other:?}"),
     }
@@ -228,7 +228,7 @@ fn malformed_syntax_reports_automaton_not_a_panic() {
         "[z-a]",
         "(?P<>x)",
     ] {
-        match Sieve::new(pattern) {
+        match Sieve::new(pattern, Residency::Memory) {
             Err(BuildError::Automaton(why)) => assert!(
                 !why.is_empty(),
                 "{pattern:?}: Automaton carried no explanation"

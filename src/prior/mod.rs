@@ -21,6 +21,16 @@
 //! structure to price a run correctly and little enough to stay a compile-time
 //! constant — nothing observes traffic, learns, or adapts at runtime.
 //!
+//! # One model, four corpora
+//!
+//! The shape above is the model; [`minted`] holds what it measured. Four corpora are
+//! shipped — a polyglot code tree, English literary prose, machine-generated JSON, and
+//! sixteen systems' production logs — because a chain minted on source text is a claim
+//! about source text, and shipping only that one meant a caller filtering prose was
+//! being priced under a model of somebody else's Rust. They disagree at the coarsest
+//! level: `Space` is the most self-following class in a code tree and the *least* in
+//! prose. Read [`minted`] for what each says and where each came from.
+//!
 //! # The memoryless priors are kept, deliberately
 //!
 //! [`Prior::Uniform`] and [`Prior::Text`] are the memoryless special cases: every
@@ -28,6 +38,12 @@
 //! draws exactly. They stay because the gate decides on the **worst case over all
 //! priors**, and because keeping the superseded model addressable is what lets its
 //! error be measured rather than asserted.
+
+mod minted;
+
+pub use minted::{
+    JSON, JSON_BYTES, LOG, LOG_BYTES, PROSE, PROSE_BYTES, SOURCE, SOURCE_BYTES,
+};
 
 /// Byte classes coarse enough that a 7x7 matrix over a real corpus has dense
 /// support, and fine enough that the runs patterns actually require — digits,
@@ -170,98 +186,6 @@ const UNIFORM: Chain = Chain::memoryless({
 /// drawn independently.
 const TEXT: Chain = Chain::memoryless([0.222, 0.030, 0.487, 0.055, 0.015, 0.191, 0.0001]);
 
-/// The measured first-order chain over real source bytes.
-///
-/// Minted on Darwin 25.5.0 arm64, 2026-07-29, over 6,418 source files (64.1 MiB) of
-/// this repository — Rust, Zig, Go, Python, TypeScript, SQL, Swift, Markdown, TOML.
-/// Re-mint with `cargo run --release --example mint` from the repository root.
-///
-/// The diagonal is the reason this type exists. Each class's chance of repeating,
-/// against its marginal share:
-///
-/// | class | marginal | repeats | ratio |
-/// |---|---|---|---|
-/// | `Space` | 0.1817 | 0.4517 | 2.5x |
-/// | `Break` | 0.0271 | 0.1048 | 3.9x |
-/// | `Lower` | 0.5703 | 0.7683 | 1.3x |
-/// | `Upper` | 0.0560 | 0.3565 | 6.4x |
-/// | `Digit` | 0.0186 | 0.3863 | **20.8x** |
-/// | `Punct` | 0.1325 | 0.2524 | 1.9x |
-/// | `High`  | 0.0139 | 0.9167 | **66.0x** |
-///
-/// A memoryless prior therefore under-prices a `k`-byte digit run by about `20.8^k`
-/// — which is precisely the error that let a filter rejecting essentially nothing
-/// look like one rejecting everything.
-///
-/// `Space` never reaching `Break` is real rather than a rounding artifact: this tree
-/// is linted, so trailing whitespace before a newline is effectively absent.
-// A transition matrix is one table, and reading it by row against the header below
-// is the whole point — so the row-per-line layout is pinned rather than reflowed.
-#[rustfmt::skip]
-pub const SOURCE: Chain = Chain {
-    //     Space     Break     Lower     Upper     Digit     Punct      High
-    next: [
-        [0.451677, 0.000000, 0.333127, 0.042422, 0.016962, 0.149964, 0.005848], // Space
-        [0.713848, 0.104793, 0.063638, 0.016030, 0.000283, 0.101210, 0.000199], // Break
-        [0.082433, 0.008042, 0.768254, 0.030242, 0.009533, 0.101450, 0.000046], // Lower
-        [0.042460, 0.007471, 0.514333, 0.356499, 0.002727, 0.076414, 0.000095], // Upper
-        [0.110313, 0.037564, 0.075528, 0.023526, 0.386326, 0.365925, 0.000818], // Digit
-        [0.211487, 0.139038, 0.299459, 0.076937, 0.020348, 0.252417, 0.000314], // Punct
-        [0.066678, 0.008770, 0.001777, 0.000535, 0.001748, 0.003810, 0.916681], // High
-    ],
-    start: [0.181717, 0.027072, 0.570280, 0.055983, 0.018575, 0.132492, 0.013881],
-};
-
-/// Marginal frequency of every byte value over the same minted corpus as [`SOURCE`].
-///
-/// **Per-byte, and that resolution is load-bearing.** The class chain carries how
-/// bytes *cluster*; this carries how often each one occurs, and the two answer
-/// different questions. Pricing an engine's escape set at class resolution treats `a`
-/// and `f` as equally common when `a` occurs about three times as often — which is
-/// exactly the difference between a pattern whose accelerator trips constantly (worth
-/// fronting) and one whose accelerator earns its keep (not worth fronting). Arming on
-/// the class average did both wrong at once.
-///
-/// Minted alongside [`SOURCE`] on the same 64.1 MiB of real source. The evidence that
-/// the resolution matters is in the excursion solver's own spread: read at class
-/// resolution, the eleven lead bytes it inverts disagreed by 10x (3.6 to 35.2); read
-/// from this table they agree within 1.7x (7.06 to 11.78). The variance was the
-/// approximation, not the measurement.
-pub const SOURCE_BYTES: [f64; 256] = [
-    0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000,
-    0.00000000, 0.02348194, 0.02707233, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000,
-    0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000,
-    0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000,
-    0.15823466, 0.00093228, 0.01212123, 0.00084917, 0.00016688, 0.00035293, 0.00058606, 0.00179882,
-    0.01068197, 0.01038673, 0.00162193, 0.00150419, 0.01070865, 0.00637019, 0.01385492, 0.00496256,
-    0.00523016, 0.00400453, 0.00219353, 0.00122989, 0.00159107, 0.00078858, 0.00147180, 0.00072862,
-    0.00097900, 0.00035768, 0.00707436, 0.00110169, 0.00086292, 0.00846172, 0.00127486, 0.00011155,
-    0.00020109, 0.00435993, 0.00116575, 0.00333640, 0.00214529, 0.00586268, 0.00200241, 0.00110330,
-    0.00083414, 0.00317845, 0.00018502, 0.00039273, 0.00256395, 0.00203484, 0.00377334, 0.00244100,
-    0.00207299, 0.00029789, 0.00431163, 0.00501794, 0.00464331, 0.00189854, 0.00103260, 0.00053590,
-    0.00033695, 0.00035935, 0.00009711, 0.00275525, 0.00427699, 0.00275255, 0.00001399, 0.01390198,
-    0.00442084, 0.03637424, 0.00817733, 0.02109737, 0.02265156, 0.07370121, 0.01314766, 0.01015872,
-    0.01218381, 0.04055988, 0.00110193, 0.00451404, 0.02458769, 0.01465999, 0.04106374, 0.03908288,
-    0.01906260, 0.00161610, 0.04674633, 0.03927468, 0.05454883, 0.01670062, 0.00695385, 0.00526917,
-    0.00823928, 0.00747249, 0.00133413, 0.00376073, 0.00083514, 0.00375906, 0.00002829, 0.00000000,
-    0.00421794, 0.00000110, 0.00001260, 0.00000134, 0.00000124, 0.00000061, 0.00015301, 0.00000790,
-    0.00001624, 0.00002082, 0.00000115, 0.00000051, 0.00000202, 0.00000034, 0.00000030, 0.00000021,
-    0.00012277, 0.00000094, 0.00015467, 0.00000512, 0.00420130, 0.00011869, 0.00000476, 0.00001790,
-    0.00000150, 0.00000086, 0.00000103, 0.00000013, 0.00000583, 0.00000068, 0.00000024, 0.00000232,
-    0.00000219, 0.00000112, 0.00000693, 0.00000202, 0.00000609, 0.00000750, 0.00002823, 0.00001946,
-    0.00000007, 0.00000179, 0.00000098, 0.00000192, 0.00000080, 0.00000022, 0.00000025, 0.00000016,
-    0.00000077, 0.00000482, 0.00000504, 0.00000228, 0.00000031, 0.00000454, 0.00000109, 0.00003290,
-    0.00000122, 0.00000089, 0.00000067, 0.00000204, 0.00000256, 0.00000174, 0.00000012, 0.00000018,
-    0.00000000, 0.00000000, 0.00006262, 0.00002132, 0.00000003, 0.00000016, 0.00000000, 0.00000001,
-    0.00000000, 0.00000305, 0.00000147, 0.00000147, 0.00000119, 0.00000000, 0.00001351, 0.00000446,
-    0.00000129, 0.00000048, 0.00000001, 0.00000000, 0.00000009, 0.00000000, 0.00000000, 0.00000000,
-    0.00000024, 0.00000055, 0.00000000, 0.00000006, 0.00000000, 0.00000000, 0.00000000, 0.00000000,
-    0.00000001, 0.00000106, 0.00454794, 0.00000024, 0.00000058, 0.00000043, 0.00000042, 0.00000010,
-    0.00000021, 0.00000003, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000021,
-    0.00000083, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000,
-    0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000,
-];
-
 /// Which byte model the gate is reasoning under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Prior {
@@ -270,28 +194,55 @@ pub enum Prior {
     /// Source-text class shares, drawn independently. The memoryless model the
     /// persistence matrix supersedes.
     Text,
-    /// Source text as a first-order chain — the only one of the three that prices
-    /// a class run correctly.
+    /// Source text as a first-order chain — the first of these that prices a class
+    /// run correctly. See [`SOURCE`].
     Source,
+    /// English literary prose. See [`PROSE`], which disagrees with [`SOURCE`] about
+    /// whether a space is likely to be followed by another one.
+    Prose,
+    /// Machine-generated JSON, where every class persists and none is rare. See
+    /// [`JSON`].
+    Json,
+    /// Production service logs from sixteen emitters. See [`LOG`].
+    Log,
 }
 
 /// The chains the gate sweeps when a caller names none — every [`Prior`], resolved so
 /// the list cannot drift from the enum.
 ///
-/// A caller whose documents are not source text (English prose, JSON logs, minified
-/// JavaScript, DNA) should mint their own and pass them in a [`crate::Policy`]: these
-/// three describe a code tree, and a prior is a claim about the bytes that will
-/// actually be searched. `cargo run --release --example mint` prints the matrix.
-pub const DEFAULT_CHAINS: [Chain; Prior::ALL.len()] = [
-    Prior::Uniform.chain(),
-    Prior::Text.chain(),
-    Prior::Source.chain(),
-];
+/// Four measured corpora and two memoryless models, and the breadth is the point: the
+/// gate takes the **worst case** over this set, so sweeping it is what lets a default
+/// [`Policy`](crate::Policy) be safe for a caller who never says what they are
+/// searching. A caller who *does* know narrows it — `chains: &[Prior::Json.chain()]`
+/// — and gets a better-informed and therefore looser decision. Narrowing is the only
+/// direction that loosens; adding a corpus can only tighten.
+///
+/// A corpus none of these describes (minified JavaScript, DNA, a wire protocol) is
+/// still worth minting: `cargo run --release --example mint -- mine` prints the matrix
+/// and the byte table for whatever `$SHENG_CORPUS` and `$SHENG_KINDS` point at.
+pub const DEFAULT_CHAINS: [Chain; Prior::ALL.len()] = {
+    // Resolved by walking `ALL` rather than transcribed, so "cannot drift from the
+    // enum" is a property of this constant instead of a request to whoever adds one.
+    let mut out = [UNIFORM; Prior::ALL.len()];
+    let mut i = 0;
+    while i < out.len() {
+        out[i] = Prior::ALL[i].chain();
+        i += 1;
+    }
+    out
+};
 
 impl Prior {
     /// Every prior the gate consults. The decision is the **worst case** over this
     /// set, so adding one can only tighten the gate.
-    pub const ALL: [Self; 3] = [Self::Uniform, Self::Text, Self::Source];
+    pub const ALL: [Self; 6] = [
+        Self::Uniform,
+        Self::Text,
+        Self::Source,
+        Self::Prose,
+        Self::Json,
+        Self::Log,
+    ];
 
     /// The first-order (block, class) chain this prior resolves to.
     #[must_use]
@@ -300,17 +251,23 @@ impl Prior {
             Self::Uniform => UNIFORM,
             Self::Text => TEXT,
             Self::Source => SOURCE,
+            Self::Prose => PROSE,
+            Self::Json => JSON,
+            Self::Log => LOG,
         }
     }
 
     /// Marginal frequency of each byte value under this prior — what the escape-set
-    /// model reads. Only [`Prior::Source`] has per-byte resolution; the memoryless
-    /// priors spread each class's mass evenly across its members, which is all the
+    /// model reads. Every *measured* prior has per-byte resolution; the two memoryless
+    /// ones spread each class's mass evenly across its members, which is all the
     /// structure they have.
     #[must_use]
     pub fn byte_freq(self) -> [f64; 256] {
         match self {
             Self::Source => SOURCE_BYTES,
+            Self::Prose => PROSE_BYTES,
+            Self::Json => JSON_BYTES,
+            Self::Log => LOG_BYTES,
             other => {
                 let chain = other.chain();
                 let mut out = [0.0f64; 256];
@@ -387,6 +344,51 @@ mod tests {
             let i = class as usize;
             let ratio = SOURCE.next[i][i] / SOURCE.start[i];
             assert!(ratio > 6.0, "{class:?} persistence ratio only {ratio}");
+        }
+    }
+
+    /// Four measured corpora are only worth four sets of constants if they say four
+    /// different things — otherwise the sweep costs the gate breadth it does not buy.
+    ///
+    /// The clearest disagreement is whitespace. Source text indents, so `Space` is the
+    /// likeliest class to follow itself in the whole tree; prose puts one space between
+    /// words, so there the same class is the *least* likely to repeat of any measured
+    /// row. That is a sign flip in the model's coarsest term, not a shift in a
+    /// decimal — a `[ ]{2,}` run is nearly certain under one chain and nearly
+    /// impossible under another. It also catches the paste error that would otherwise
+    /// be invisible: a table copied into two constants.
+    #[test]
+    fn the_measured_corpora_disagree_about_the_bytes_they_measured() {
+        let space = Class::Space as usize;
+        assert!(
+            SOURCE.next[space][space] > SOURCE.start[space],
+            "indented source has to make a space likely to follow a space"
+        );
+        assert!(
+            PROSE.next[space][space] < PROSE.start[space] / 4.0,
+            "prose separates words with one space, so its Space row cannot persist"
+        );
+        for (name, chain, freq) in [
+            ("SOURCE", SOURCE, SOURCE_BYTES),
+            ("PROSE", PROSE, PROSE_BYTES),
+            ("JSON", JSON, JSON_BYTES),
+            ("LOG", LOG, LOG_BYTES),
+        ] {
+            for (other, rival, rival_freq) in [
+                ("SOURCE", SOURCE, SOURCE_BYTES),
+                ("PROSE", PROSE, PROSE_BYTES),
+                ("JSON", JSON, JSON_BYTES),
+                ("LOG", LOG, LOG_BYTES),
+            ] {
+                if name == other {
+                    continue;
+                }
+                assert_ne!(
+                    chain.start, rival.start,
+                    "{name} and {other} carry one corpus between them"
+                );
+                assert_ne!(freq, rival_freq, "{name}_BYTES and {other}_BYTES are one table");
+            }
         }
     }
 }

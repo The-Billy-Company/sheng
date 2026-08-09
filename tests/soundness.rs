@@ -21,6 +21,7 @@ use regex_automata::nfa::thompson;
 use regex_automata::util::syntax;
 
 use sheng::Sieve;
+use sheng::price::Residency;
 
 // Shares the one corpus walker with the examples instead of keeping a second copy of
 // it here — `examples/common.rs` is the version with paths kept beside the bytes,
@@ -135,7 +136,10 @@ fn a_refutation_is_never_wrong_on_mutated_haystacks() {
             }
             assert!(
                 !(hit && sieve.refutes(&hay)),
-                "UNSOUND: {pattern:?} matches {hay:?} but the sieve refuted it (round {round})"
+                "UNSOUND on {}/{}: {pattern:?} matches {hay:?} but the sieve refuted it \
+                 (round {round})",
+                std::env::consts::OS,
+                std::env::consts::ARCH
             );
         }
     }
@@ -167,7 +171,9 @@ fn a_refutation_is_never_wrong_on_real_source_bytes() {
             matched_any |= hit;
             assert!(
                 !(hit && sieve.refutes(bytes)),
-                "UNSOUND: {pattern:?} matches {} but the sieve refuted it",
+                "UNSOUND on {}/{}: {pattern:?} matches {} but the sieve refuted it",
+                std::env::consts::OS,
+                std::env::consts::ARCH,
                 path.display()
             );
         }
@@ -199,24 +205,32 @@ fn every_accelerated_kernel_agrees_with_the_scalar_reference() {
     let kernel = sheng::shuffle::kernel();
     let slate = harvested();
     let skipping: usize = slate.iter().map(|(_, s)| s.skipping()).sum();
+    // OS alongside ARCH so a native matrix leg's own log names the (OS, architecture)
+    // pair it ran on — the two axes the six-target proof crosses are otherwise
+    // indistinguishable in a bare "x86_64" once Windows and Linux share one.
     println!(
-        "dispatch chose {kernel:?} on {}; {skipping} skip lanes across {} sieves",
+        "dispatch chose {kernel:?} on {}/{}; {skipping} skip lanes across {} sieves",
+        std::env::consts::OS,
         std::env::consts::ARCH,
         slate.len()
     );
     if cfg!(any(target_arch = "aarch64", target_arch = "x86_64")) {
         assert!(
             kernel.is_vector(),
-            "{} has a byte shuffle but dispatch chose {kernel:?} — this test would \
+            "{}/{} has a byte shuffle but dispatch chose {kernel:?} — this test would \
              compare the scalar path against itself",
+            std::env::consts::OS,
             std::env::consts::ARCH
         );
     }
-    if sheng::price::active().is_measured() {
+    if sheng::price::active(Residency::Memory).is_measured(Residency::Memory) {
         assert!(
             skipping > 0,
-            "no lane on the slate chose the skip kernel, so nothing below differentiates \
-             it — either the planner regressed or the slate no longer covers it"
+            "no lane on the slate chose the skip kernel on {}/{}, so nothing below \
+             differentiates it — either the planner regressed or the slate no longer \
+             covers it",
+            std::env::consts::OS,
+            std::env::consts::ARCH
         );
     }
 
@@ -242,7 +256,9 @@ fn every_accelerated_kernel_agrees_with_the_scalar_reference() {
             assert_eq!(
                 sieve.refutes(&hay),
                 sieve.refutes_scalar(&hay),
-                "kernel disagreement on {pattern:?} for {len} bytes (round {round})"
+                "kernel disagreement on {}/{} for {pattern:?}, {len} bytes (round {round})",
+                std::env::consts::OS,
+                std::env::consts::ARCH
             );
         }
     }
@@ -260,7 +276,7 @@ fn an_armed_sieve_retires_most_of_what_it_sees() {
     let files = common::corpus_paths(600);
     let armed: Vec<(&str, Sieve)> = PATTERNS
         .iter()
-        .filter_map(|&p| Sieve::new(p).ok().map(|s| (p, s)))
+        .filter_map(|&p| Sieve::new(p, Residency::Memory).ok().map(|s| (p, s)))
         .collect();
     assert!(
         !armed.is_empty(),

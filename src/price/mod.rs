@@ -65,7 +65,7 @@ mod calibration;
 mod gate;
 mod minted;
 
-pub use calibration::{Calibration, active};
+pub use calibration::{Calibration, REGIMES, Residency, active};
 pub use gate::{CostFact, MARGIN, NOMINAL_LEN, survival};
 pub use minted::{LINUX_X86_64_SSSE3, MACOS_AARCH64_NEON, MINTED, UNMEASURED};
 

@@ -28,6 +28,22 @@ pub fn root() -> std::path::PathBuf {
         .to_path_buf()
 }
 
+/// Which file extensions [`root`] is read for.
+///
+/// `$SHENG_KINDS` — comma-separated, dots optional — is the other half of pointing a
+/// mint at a corpus, and without it `$SHENG_CORPUS` cannot reach one: a tree of prose,
+/// JSON, or logs is invisible to the source-tree default no matter where the root is
+/// aimed. That is why the shipped priors all described a code tree.
+fn kinds() -> Vec<String> {
+    const SOURCE: &str = "rs,zig,go,py,ts,tsx,md,toml,sql,swift";
+    std::env::var("SHENG_KINDS")
+        .unwrap_or_else(|_| SOURCE.into())
+        .split(',')
+        .map(|kind| kind.trim().trim_start_matches('.').to_owned())
+        .filter(|kind| !kind.is_empty())
+        .collect()
+}
+
 /// Up to `files` non-empty source files from [`root`].
 pub fn corpus_files(files: usize) -> Vec<Vec<u8>> {
     walk(files, usize::MAX)
@@ -58,9 +74,7 @@ pub fn corpus_paths(files: usize) -> Vec<(std::path::PathBuf, Vec<u8>)> {
 /// answer every question this crate asks with whatever generator wrote it, which is
 /// the one thing a prior must not do.
 fn walk(files: usize, bytes: usize) -> Vec<(std::path::PathBuf, Vec<u8>)> {
-    const KINDS: [&str; 10] = [
-        "rs", "zig", "go", "py", "ts", "tsx", "md", "toml", "sql", "swift",
-    ];
+    let kinds = kinds();
     let mut out: Vec<(std::path::PathBuf, Vec<u8>)> = Vec::new();
     let mut held = 0usize;
     let mut stack = vec![root()];
@@ -87,7 +101,7 @@ fn walk(files: usize, bytes: usize) -> Vec<(std::path::PathBuf, Vec<u8>)> {
                 continue;
             }
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if !KINDS.contains(&ext) {
+            if !kinds.iter().any(|kind| kind.eq_ignore_ascii_case(ext)) {
                 continue;
             }
             if let Ok(text) = std::fs::read(&path)
@@ -104,21 +118,34 @@ fn walk(files: usize, bytes: usize) -> Vec<(std::path::PathBuf, Vec<u8>)> {
     out
 }
 
-/// The machine a measurement came from, from `std` alone.
+/// The silicon a measurement came from, from `std` alone.
 ///
 /// No `uname` subprocess: a mint has to be runnable on any target that can run the
 /// crate, and a shell-out is both unportable and unnecessary when the compiler already
-/// knows the answer. The kernel is included because it is the field that decides
-/// whether a calibration applies at all — a `pshufb` number describes no machine that
-/// lacks `pshufb`.
-pub fn host() -> String {
+/// knows the answer.
+///
+/// Kernel-free, deliberately, because one machine now yields one row per kernel: a
+/// banner that named a kernel would be labeling several measurements with whichever one
+/// happened to be resolved when it printed.
+pub fn machine() -> String {
     let cores = std::thread::available_parallelism().map_or(0, std::num::NonZero::get);
     format!(
-        "{} {} · {cores} logical cores · {:?} kernel",
+        "{} {} · {cores} logical cores",
         std::env::consts::OS,
-        std::env::consts::ARCH,
-        sheng::shuffle::kernel()
+        std::env::consts::ARCH
     )
+}
+
+/// [`machine`] plus the kernel currently resolved — what a single [`Calibration`] row's
+/// `host` field records.
+///
+/// The kernel belongs here because it is the field that decides whether a calibration
+/// applies at all: a `pshufb` number describes no machine that lacks `pshufb`, and a
+/// `vpshufb` one describes no machine that lacks `vpshufb` either.
+///
+/// [`Calibration`]: sheng::price::Calibration
+pub fn host() -> String {
+    format!("{} · {:?} kernel", machine(), sheng::shuffle::kernel())
 }
 
 /// Today, as `YYYY-MM-DD`, without a `date` subprocess.

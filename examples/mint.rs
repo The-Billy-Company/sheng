@@ -1,12 +1,38 @@
-//! Mint the calibration constants. Paste the output into `src/prior.rs` and
+//! Mint the calibration constants. Paste the output into `src/prior/minted.rs` and
 //! `src/price/minted.rs`; the row it prints carries its own machine and date.
 //!
 //! Runs from anywhere — the corpus is found by [`common::root`], and `$SHENG_CORPUS`
 //! points it at the bytes you actually search rather than the tree this file sits in.
 //! Both halves of the output are claims about a *place*: the price row describes one
 //! (architecture, kernel) pair, and the persistence matrix describes one corpus.
-//! Minting on new silicon adds a row to `price::MINTED`; minting on a new corpus
-//! replaces a prior a caller then passes in a `Policy`.
+//! Minting on new silicon adds a row to `price::MINTED`; minting on a new corpus adds
+//! one to `prior::DEFAULT_CHAINS`, or replaces a prior a caller passes in a `Policy`.
+//!
+//! Which is why a run is one claim or the other, never both. Unargued, the mint
+//! measures the source prior and then prices every kernel present. Given a prior's
+//! name it measures that corpus and stops — because a price row swept over prose is
+//! still keyed on (architecture, kernel), so pasting one would overwrite a row
+//! measured over the bytes its callers actually search:
+//!
+//! ```text
+//! cargo run --release --example mint                       # SOURCE, plus a row per kernel
+//! SHENG_CORPUS=/tmp/gutenberg SHENG_KINDS=txt \
+//!     cargo run --release --example mint -- prose          # PROSE alone
+//! ```
+//!
+//! `$SHENG_KINDS` is not optional for that second form: a tree of prose, JSON, or logs
+//! is invisible to the source-extension default however `$SHENG_CORPUS` is aimed, and
+//! that omission is the whole reason every shipped prior once described a code tree.
+//! The corpora the shipped non-source priors were minted from are pinned by commit in
+//! `.github/workflows/priors.yml`, which re-mints them and fails on drift.
+//!
+//! One run prints a price row per kernel the machine can execute, because a row is
+//! keyed on the kernel and one x86_64 box holds three of them. That sweep is not a
+//! convenience: `arch::kernel` refuses to dispatch to a kernel `price::MINTED` has no
+//! row for, so a mint that only ever measured what dispatch chose could never reach a
+//! newly added instruction set — the row it needs would be waiting on the measurement
+//! the measurement was waiting on. `shuffle::force` breaks that circle, and validates
+//! against the same runtime probe, so nothing here can time silicon that is not present.
 //!
 //! Two independent measurements, because a measured value with no machine beside
 //! it is an anecdote:
@@ -32,26 +58,151 @@ use sheng::prior::{CLASSES, Class};
 
 mod common;
 
-/// Enough real text that the rare-class rows are not a handful of samples.
+/// Enough real text that the rare-class rows are not a handful of samples — and, for
+/// the price half, far enough past any last-level cache that no traversal is ever warm.
 const WANT_BYTES: usize = 64 << 20;
+
+/// The corpus the cache-resident column is timed over: small enough to sit inside the
+/// L2 of every machine `price::MINTED` names, so `min`-of-[`ROUNDS`] is necessarily
+/// taken from a pass whose bytes were already resident.
+///
+/// That is the whole trick, and it is why the two columns need no separate machinery.
+/// A minimum over several traversals discards the cold first pass by construction. Over
+/// 64 MiB no pass is ever warm, so the minimum is a memory-resident measurement; over
+/// 1 MiB every pass after the first is warm, so the minimum is a cache-resident one.
+/// Same timer, same loop, same slate — the corpus size is the independent variable.
+const CACHE_BYTES: usize = 1 << 20;
+
+/// The corpus volume under which a run cannot claim to have measured memory at all.
+///
+/// Past the last-level cache of every machine `price::MINTED` names, with margin. Not a
+/// preference: a mint handed less than this measures cache twice and prints a row that
+/// says the memory system does not exist.
+const MEMORY_FLOOR: usize = 32 << 20;
+
 const ROUNDS: usize = 7;
 
+/// How many observed pairs a transition row needs before it counts as a measurement.
+///
+/// A budget cannot promise this per row, only in aggregate: a class that barely occurs
+/// conditions its row on whatever it got. English prose holds nine non-ASCII bytes in
+/// eleven megabytes and the loghub sample holds none at all, which counted straight
+/// print a row of ninths and a row of zeros — the first is a coincidence wearing six
+/// decimal places, and the second is not a distribution.
+///
+/// So a row under this floor is not smoothed toward anything. It is written
+/// **absorbing** — the class always repeats — which is the most persistent row that
+/// exists and therefore prices every run through it at the maximum. Same doctrine as
+/// [`price::UNMEASURED`](sheng::price::UNMEASURED): what was not measured has to read
+/// as the worst case rather than as a guess, because the guess is what arms a sieve
+/// nobody timed.
+const SUPPORT: u64 = 1 << 10;
+
 fn main() {
+    // The name of the prior being minted, and — because a run is a claim about either
+    // a corpus or a machine and never both — which halves run at all. Named, the mint
+    // measures that corpus and stops: a price row swept over prose is still keyed on
+    // (architecture, kernel), so pasting one would overwrite a row that was measured
+    // over the bytes its callers really search.
+    let named = std::env::args().nth(1);
+    let prior = named
+        .as_deref()
+        .unwrap_or("SOURCE")
+        .trim()
+        .to_ascii_uppercase();
     let docs = common::corpus_bytes(WANT_BYTES);
     let total: usize = docs.iter().map(Vec::len).sum();
     println!(
         "// minted on {} · {} · {} files · {:.1} MiB from {}\n",
-        common::host(),
+        common::machine(),
         common::today(),
         docs.len(),
         total as f64 / (1 << 20) as f64,
         common::root().display()
     );
 
-    persistence(&docs);
+    persistence(&docs, &prior);
     let freq = histogram(&docs);
-    byte_table(&freq);
-    price(&docs, &freq);
+    byte_table(&freq, &prior);
+    if named.is_some() {
+        println!("// prior {prior} only — paste both constants into src/prior/minted.rs.");
+        return;
+    }
+
+    // A tree smaller than the memory-resident budget cannot produce a memory-resident
+    // column, and the failure is silent rather than loud: `corpus_bytes` returns
+    // everything it found, so both requests come back holding the *same bytes* and the
+    // two columns agree to four decimal places. That reads exactly like the finding
+    // "residency does not matter on this machine" — which is how it was in fact read,
+    // for an afternoon, off the 0.5 MiB tree this file sits in.
+    //
+    // So it is a hard refusal rather than a warning. A row is a claim about a memory
+    // system, and a mint that never reached memory has no business printing one.
+    assert!(
+        total > MEMORY_FLOOR,
+        "the corpus at {} is {:.2} MiB, under the {} MiB a memory-resident column needs \
+         — both columns would hold the same bytes and agree by construction. Aim \
+         $SHENG_CORPUS at a tree larger than any last-level cache.",
+        common::root().display(),
+        total as f64 / (1 << 20) as f64,
+        MEMORY_FLOOR >> 20
+    );
+
+    // The cache-resident corpus gets its own histogram, and it has to. Both excursion
+    // solves invert a cost formula in which the escape *rate* is a known — so feeding
+    // a 1 MiB timing the 64 MiB corpus's marginals would attribute the difference
+    // between two corpora to the memory system.
+    let hot = common::corpus_bytes(CACHE_BYTES);
+    let hot_freq = histogram(&hot);
+    let hot_bytes: usize = hot.iter().map(Vec::len).sum();
+    assert!(
+        hot_bytes < total / 8,
+        "the cache-resident slice is {:.2} MiB of a {:.2} MiB corpus — too close to the \
+         whole thing to be a separate regime",
+        hot_bytes as f64 / (1 << 20) as f64,
+        total as f64 / (1 << 20) as f64
+    );
+    println!(
+        "// cache-resident column: {} files · {:.2} MiB, its own marginals\n",
+        hot.len(),
+        hot_bytes as f64 / (1 << 20) as f64
+    );
+    let (cache, memory) = (
+        Corpus {
+            docs: &hot,
+            freq: &hot_freq,
+        },
+        Corpus {
+            docs: &docs,
+            freq: &freq,
+        },
+    );
+
+    // One row per kernel this silicon can run, not one for the kernel it would have
+    // dispatched to — because `arch::kernel` will not dispatch to a kernel `MINTED`
+    // has no row for, so the newest instruction set is always the one a
+    // dispatch-following mint could never reach. `force` is the seam that breaks that
+    // circle, and it refuses any kernel the probe did not admit, so this loop can only
+    // time silicon that is really here.
+    let kernels = sheng::shuffle::available();
+    println!("// kernels this machine can run, fastest first: {kernels:?}\n");
+    for &kernel in kernels {
+        assert!(
+            sheng::shuffle::force(kernel),
+            "{kernel:?} came from available() but force() refused it"
+        );
+        println!("\n// ── {kernel:?} ─────────────────────────────────────────────");
+        price(cache, memory);
+    }
+}
+
+/// A corpus and the byte marginals measured over *it*, kept together because every
+/// excursion solve reads both and pairing them wrongly is a silent bias rather than an
+/// error.
+#[derive(Clone, Copy)]
+struct Corpus<'a> {
+    docs: &'a [Vec<u8>],
+    freq: &'a [f64; 256],
 }
 
 /// Marginal frequency of every byte value.
@@ -71,8 +222,8 @@ fn histogram(docs: &[Vec<u8>]) -> [f64; 256] {
     n.map(|count| ratio(count, total))
 }
 
-fn byte_table(freq: &[f64; 256]) {
-    println!("pub const SOURCE_BYTES: [f64; 256] = [");
+fn byte_table(freq: &[f64; 256], prior: &str) {
+    println!("pub const {prior}_BYTES: [f64; 256] = [");
     for row in freq.chunks(8) {
         let cells: Vec<String> = row.iter().map(|f| format!("{f:.8}")).collect();
         println!("    {},", cells.join(", "));
@@ -82,7 +233,7 @@ fn byte_table(freq: &[f64; 256]) {
 
 /// `next[i][j]` — how often class `j` follows class `i`, and the persistence ratio
 /// that makes the memoryless prior wrong.
-fn persistence(docs: &[Vec<u8>]) {
+fn persistence(docs: &[Vec<u8>], prior: &str) {
     let mut counts = [[0u64; CLASSES]; CLASSES];
     let mut marginal = [0u64; CLASSES];
     for doc in docs {
@@ -95,12 +246,25 @@ fn persistence(docs: &[Vec<u8>]) {
     }
 
     let grand: u64 = marginal.iter().sum();
-    println!("pub const SOURCE: Chain = Chain {{");
+    let support = counts.map(|row| row.iter().sum::<u64>());
+    // Resolved before anything is printed so the constant and the ratio table below it
+    // cannot describe different matrices — the diagnostics read the emitted row, not
+    // the counts it came from. Rows the corpus could not speak for absorb; see SUPPORT.
+    let next: [[f64; CLASSES]; CLASSES] = std::array::from_fn(|from| {
+        std::array::from_fn(|to| match support[from] >= SUPPORT {
+            true => ratio(counts[from][to], support[from]),
+            false => f64::from(u8::from(from == to)),
+        })
+    });
+
+    println!("pub const {prior}: Chain = Chain {{");
     println!("    next: [");
-    for (row, class) in counts.iter().zip(Class::ALL) {
-        let n: u64 = row.iter().sum();
-        let cells: Vec<String> = row.iter().map(|&c| format!("{:.6}", ratio(c, n))).collect();
-        println!("        [{}], // {class:?}", cells.join(", "));
+    for ((row, class), n) in next.iter().zip(Class::ALL).zip(support) {
+        let cells: Vec<String> = row.iter().map(|p| format!("{p:.6}")).collect();
+        let thin = (n < SUPPORT)
+            .then(|| format!(" — {n} pairs is under the support floor: absorbing"))
+            .unwrap_or_default();
+        println!("        [{}], // {class:?}{thin}", cells.join(", "));
     }
     println!("    ],");
     let start: Vec<String> = marginal
@@ -111,9 +275,9 @@ fn persistence(docs: &[Vec<u8>]) {
     println!("}};\n");
 
     println!("// class      marginal  persistent  ratio");
-    for ((i, row), &seen) in counts.iter().enumerate().zip(&marginal) {
+    for ((i, row), &seen) in next.iter().enumerate().zip(&marginal) {
         let m = ratio(seen, grand);
-        let p = ratio(row[i], row.iter().sum());
+        let p = row[i];
         println!(
             "// {:<10} {m:8.4}  {p:10.4}  {:5.1}x",
             format!("{:?}", Class::ALL[i]),
@@ -125,7 +289,17 @@ fn persistence(docs: &[Vec<u8>]) {
 
 /// Nanoseconds per byte for each kernel, timed alone so a coefficient can be
 /// re-minted without re-deriving any other.
-fn price(docs: &[Vec<u8>], freq: &[f64; 256]) {
+///
+/// Two of the five coefficients are measured **twice**, once per `price::Residency`, and
+/// three are measured once. Which is which is a claim about what each loop waits on, and
+/// it is asserted below rather than assumed:
+///
+/// * `dfa_skip` and both excursion coefficients reach memory, so they carry a regime.
+/// * `dfa_walk` waits on L1 for a table it has already pulled in, and `sieve` is
+///   issue-bound at three operations a byte. Neither has any headroom a hotter haystack
+///   could give it, so measuring them twice would only publish this timer's noise as a
+///   physical effect.
+fn price(cache: Corpus<'_>, memory: Corpus<'_>) {
     // Two patterns over the same real bytes, differing only in whether the engine
     // can skip. Both trail a NUL pair, which source text does not contain, so
     // neither can match and both time a full traversal rather than an early exit.
@@ -133,20 +307,59 @@ fn price(docs: &[Vec<u8>], freq: &[f64; 256]) {
     // The lead is what selects the arm: one rare byte leaves an escape set of one,
     // which the engine accelerates; a 52-byte class is far over its threshold, so it
     // is committed to the walk.
-    let skip = timed(docs, SKIP_REF);
-    let walk = timed(docs, WALK_REF);
+    //
+    // The walk is timed over the memory-resident corpus and used for both columns. It
+    // is the coefficient the regime does not move, and taking it from the larger corpus
+    // keeps it comparable to every row minted before residency existed.
+    let walk = timed(memory.docs, WALK_REF);
 
-    let excursion = excursion(docs, freq);
-    // An instrument the slate could not exercise inherits the engine's coefficient
-    // rather than a guess — see `skip_excursion`.
-    let skip_e = skip_excursion(docs, freq).map(|e| if e.is_nan() { excursion } else { e });
+    let mut skip = [0.0; 2];
+    let mut excursions = [0.0; 2];
+    let mut skip_e = [[0.0; 2]; 2];
+    for (at, corpus) in [(0, cache), (1, memory)] {
+        let name = if at == 0 { "Cache" } else { "Memory" };
+        println!("\n// ── {name}-resident ──");
+        skip[at] = timed(corpus.docs, SKIP_REF);
+        excursions[at] = excursion(corpus.docs, corpus.freq);
+        // An instrument the slate could not exercise inherits the engine's coefficient
+        // rather than a guess — see `skip_excursion`.
+        let per = skip_excursion(corpus.docs, corpus.freq);
+        for (slot, solved) in per.iter().enumerate() {
+            skip_e[slot][at] = if solved.is_nan() {
+                excursions[at]
+            } else {
+                *solved
+            };
+        }
+    }
+
+    // The direction is physics, not a fit, so a run that came out the other way measured
+    // something else — a corpus that did not fit, or a machine that was not idle. Said
+    // here, where the numbers are, rather than left for the test that reads the pasted
+    // row much later.
+    //
+    // Only the engine's two coefficients are checked. `skip_excursion` re-enters a
+    // sixteen-block quotient resident in either regime, so it is not predicted to move,
+    // and it is a maximum over a five-pattern slate — warning on its noise would train a
+    // reader to ignore this line.
+    for (label, hot, cold) in [
+        ("dfa_skip", skip[0], skip[1]),
+        ("dfa_excursion", excursions[0], excursions[1]),
+    ] {
+        if hot > cold {
+            println!(
+                "// WARNING {label}: cache-resident {hot:.4} exceeds memory-resident \
+                 {cold:.4} — re-run on an idle machine before pasting this row."
+            );
+        }
+    }
 
     // Every sieve timing lands before a single line of the constant is printed, because
     // both this and `sieve_ns` narrate what they measured and interleaving the two would
     // hand back a constant with diagnostics inside its array literal.
     // Never a zero from a real measurement: a free pre-pass passes every worth test.
     let sieve: Vec<String> = (1..=MAX_CONJUNCTS)
-        .map(|n| match sieve_ns(docs, n) {
+        .map(|n| match sieve_ns(memory.docs, n) {
             Some(ns) => format!("{ns:.6}"),
             None => "0.0".into(),
         })
@@ -160,10 +373,18 @@ fn price(docs: &[Vec<u8>], freq: &[f64; 256]) {
     println!("    kernel: Kernel::{:?},", sheng::shuffle::kernel());
     println!("    host: {:?},", common::host());
     println!("    minted: {:?},", common::today());
-    println!("    dfa_skip: {skip:.6},");
+    // Regime-indexed literals are written `[cache, memory]`, matching
+    // `Residency::Cache as usize == 0`.
+    println!("    dfa_skip: [{:.6}, {:.6}],", skip[0], skip[1]);
     println!("    dfa_walk: {walk:.6},");
-    println!("    dfa_excursion: {excursion:.6},");
-    println!("    skip_excursion: [{:.6}, {:.6}],", skip_e[0], skip_e[1]);
+    println!(
+        "    dfa_excursion: [{:.6}, {:.6}],",
+        excursions[0], excursions[1]
+    );
+    println!(
+        "    skip_excursion: [[{:.6}, {:.6}], [{:.6}, {:.6}]],",
+        skip_e[0][0], skip_e[0][1], skip_e[1][0], skip_e[1][1]
+    );
     println!("    sieve: [{}],", sieve.join(", "));
     println!("}};");
     println!(
@@ -172,13 +393,19 @@ fn price(docs: &[Vec<u8>], freq: &[f64; 256]) {
     );
 }
 
-/// `LINUX_X86_64`-shaped, from the target itself, so the constant a mint prints cannot
-/// be labeled with a machine other than the one that ran it.
+/// `LINUX_X86_64_SSSE3`-shaped, from the target and the resolved kernel, so the
+/// constant a mint prints cannot be labeled with a machine — or a kernel — other than
+/// the one that ran it.
+///
+/// The kernel is in the name because it is half the key `price::MINTED` is looked up
+/// by. Two rows off the same x86_64 box differ in nothing else, and a pair of
+/// `LINUX_X86_64`s would be an invitation to paste one over the other.
 fn row_name() -> String {
     format!(
-        "{}_{}",
+        "{}_{}_{}",
         std::env::consts::OS.to_uppercase(),
-        std::env::consts::ARCH.to_uppercase()
+        std::env::consts::ARCH.to_uppercase(),
+        format!("{:?}", sheng::shuffle::kernel()).to_uppercase()
     )
 }
 
@@ -395,10 +622,13 @@ fn sieve_ns(docs: &[Vec<u8>], n: usize) -> Option<f64> {
         r"(?-u)<[^>]*>",
         r"(?-u)ab+c",
     ];
+    // The regime is immaterial here and stated anyway: `Gate::Ungated` consults no
+    // price, and `skip: false` is what pins every lane to the composition kernel whose
+    // cost this function exists to measure.
     let composing = sheng::Policy {
         gate: sheng::Gate::Ungated,
         skip: false,
-        ..sheng::Policy::default()
+        ..sheng::Policy::new(sheng::price::Residency::Memory)
     };
     let build = |p: &&str| sheng::Sieve::with(p, &composing).ok();
     let harvested: Vec<(&str, usize)> = SLATE

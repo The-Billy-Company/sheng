@@ -5,10 +5,15 @@
 //! must decline rather than inherit somebody else's silicon, and a caller who has
 //! measured their own must be able to say so and be believed.
 
-use sheng::price::{Calibration, MACOS_AARCH64_NEON, MINTED, UNMEASURED};
+use sheng::price::{Calibration, MACOS_AARCH64_NEON, MINTED, Residency, UNMEASURED};
 use sheng::prior::{DEFAULT_CHAINS, SOURCE_BYTES};
 use sheng::shuffle::Kernel;
 use sheng::{BuildError, Gate, Policy, Sieve};
+
+/// The regime every test below prices in. Memory-resident because that is what the
+/// shipped rows were minted over, so a decline here is about the policy under test
+/// rather than about a regime this machine has no column for.
+const AT: Residency = Residency::Memory;
 
 /// Patterns that harvest a register-sized quotient, so a decline below is about the
 /// policy rather than about a pattern with no quotient to price.
@@ -29,7 +34,7 @@ const ARMING: &[&str] = &[
 fn with(calibration: Calibration) -> Policy<'static> {
     Policy {
         calibration,
-        ..Policy::default()
+        ..Policy::new(AT)
     }
 }
 
@@ -106,7 +111,7 @@ fn a_caller_can_price_a_machine_the_crate_never_measured() {
     // A hypothetical target with no fast byte scan: skipping costs what walking costs.
     let flat = Calibration {
         arch: "hypothetical",
-        dfa_skip: 1.274907,
+        dfa_skip: [1.274907; 2],
         ..MACOS_AARCH64_NEON
     };
     let (mut moved, mut same) = (0, 0);
@@ -158,7 +163,7 @@ fn the_prior_reaches_the_decision() {
             &Policy {
                 chains,
                 gate: Gate::Ungated,
-                ..Policy::default()
+                ..Policy::new(AT)
             },
         )
         .map(|s| s.fallthrough())
@@ -208,14 +213,14 @@ fn the_prior_reaches_the_decision() {
 /// a test that can quietly stop testing is worse than no test.
 #[test]
 fn longer_documents_are_harder_to_justify() {
-    if !sheng::price::active().is_measured() {
+    if !sheng::price::active(AT).is_measured(AT) {
         return; // covered by the unmeasured tests above
     }
     let mut judged = 0;
     for pattern in ARMING {
         // No deal at the nominal length means there is nothing for a longer document
         // to be a worse deal *than*, so those patterns carry no information here.
-        let Ok(long) = Sieve::with(pattern, &Policy::default()) else {
+        let Ok(long) = Sieve::with(pattern, &Policy::new(AT)) else {
             continue;
         };
         // The short build is ungated on purpose: we want its arithmetic even when the
@@ -225,7 +230,7 @@ fn longer_documents_are_harder_to_justify() {
             &Policy {
                 len: 8.0,
                 gate: Gate::Ungated,
-                ..Policy::default()
+                ..Policy::new(AT)
             },
         )
         .expect("ungated always builds");
@@ -269,7 +274,7 @@ fn a_skip_over_the_engine_s_own_accelerator_cannot_arm_on_the_excursion_ratio() 
     use regex_automata::nfa::thompson;
     use regex_automata::util::syntax;
 
-    if !sheng::price::active().is_measured() {
+    if !sheng::price::active(AT).is_measured(AT) {
         return; // covered by the unmeasured tests above
     }
     let mut checked = 0;
@@ -300,7 +305,7 @@ fn a_skip_over_the_engine_s_own_accelerator_cannot_arm_on_the_excursion_ratio() 
             checked += 1;
         }
 
-        let cost = Sieve::with(pattern, &Policy::default()).map(|s| s.cost());
+        let cost = Sieve::with(pattern, &Policy::new(AT)).map(|s| s.cost());
         assert!(
             matches!(cost, Err(BuildError::NotWorthIt(_))),
             "{pattern:?}: searching the engine's own accelerator set must not arm, got {cost:?}"
