@@ -7,6 +7,21 @@
 /// from it, and the estimate feeding `f` is known to be optimistic even under the
 /// persistence prior, so requiring the bound to clear at 4 KiB is how a structural
 /// estimate buys margin against its own residual bias without observing traffic.
+///
+/// Every cost this length multiplies is per-byte, with no constant term, and that was
+/// measured rather than assumed. Both loops do pay something per *call* — a dozen
+/// nanoseconds or so, for table loads and a masked tail — but they pay it in nearly
+/// equal measure, so it cancels in an inequality drawn between them, and the residual
+/// is under a percent of the sieve side here: an order of magnitude inside [`MARGIN`].
+/// It is proportionally much larger against an accelerated rival, whose per-byte cost
+/// is the smaller number it hides in — but charging it there would only ever argue
+/// *for* arming, against a rival the sieve already loses to by more than an order of
+/// magnitude, so leaving it out is also the conservative direction.
+///
+/// What does not survive shortening is the advantage itself. Below roughly a kilobyte
+/// the sieve's measured edge over a walking rival falls by more than half, and this
+/// length sits near where that edge saturates. So a caller who really searches
+/// 64-byte records cannot read a verdict taken at 4 KiB as one taken at theirs.
 pub const NOMINAL_LEN: f64 = 4096.0;
 
 /// How much a modeled speedup must beat 1.0 by before it counts as a decision
