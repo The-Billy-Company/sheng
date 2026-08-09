@@ -1,10 +1,10 @@
 //! Finding the next byte that matters, without looking at the ones that do not.
 //!
 //! [`crate::shuffle`] is bound by its **load ports**, not by its instruction count:
-//! every byte costs a haystack load and a transition-row load, and on an M4 the
-//! resulting ~3.4 loads per cycle is the machine's ceiling. Deleting arithmetic from
-//! that loop buys nothing (the `max` experiment measured 2%). The only lever left is
-//! to stop reading bytes.
+//! every byte costs a haystack load and a transition-row load, and that pair sits
+//! at the machine's load-port ceiling on current silicon. Deleting arithmetic from
+//! that loop buys nothing (the `max` experiment measured inside the noise). The
+//! only lever left is to stop reading bytes.
 //!
 //! # The block that holds still
 //!
@@ -24,15 +24,15 @@
 //! # Why this is not just the engine's accelerator again
 //!
 //! `regex-automata` accelerates a state only when it escapes on **at most three**
-//! bytes, because `memchr3` is where its instrument stops. Measured over this
-//! repository, the interesting band is above that line and it is wide: `[0-9]{3}-`
-//! `[0-9]{4}` escapes on ten bytes and holds `B₀` for 97.9% of real source,
-//! `[A-Z][a-z]+Service` on twenty-six for 69.9% — and the engine accelerates
-//! neither. Below the line the sieve gains nothing it can sell, since a rival
-//! already `memchr`-ing the identical byte cannot be beaten by a filter that has to
-//! find the same byte first. So the width that pays is exactly the width the engine
-//! declines, which is a happier arrangement than it sounds: the two instruments
-//! partition the space instead of racing.
+//! bytes, because `memchr3` is where its instrument stops. The interesting band is
+//! above that line and it is wide: digit-and-hyphen patterns and identifier-shaped
+//! ones hold `B₀` for most of a typical document and escape on far more than three
+//! bytes — and the engine accelerates neither. Below the line the sieve gains
+//! nothing it can sell, since a rival already `memchr`-ing the identical byte
+//! cannot be beaten by a filter that has to find the same byte first. So the width
+//! that pays is exactly the width the engine declines, which is a happier
+//! arrangement than it sounds: the two instruments partition the space instead of
+//! racing.
 //!
 //! # Instruments
 //!

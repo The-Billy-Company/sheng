@@ -42,5 +42,5 @@ six pin the economics as a **replaceable policy** rather than a global fact.
 | `longer_documents_are_harder_to_justify`                 | the nominal length dropping out of the amortization                                      |
 | `every_shipped_row_names_a_real_machine`                 | a coefficient with no provenance, or a scalar row pricing vector economics               |
 
-The end-to-end economic check is not here — it needs 22 MiB and several seconds, so it
-lives in `examples/survey.rs`, which asserts.
+The end-to-end economic check is not here — it needs a large corpus and several
+seconds, so it lives in `examples/survey.rs`, which asserts.

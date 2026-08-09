@@ -3,7 +3,7 @@
 //! A filter that rejects nothing is not neutral — it is pure addition on every
 //! byte, and its worst case is the case where everything survives to verification.
 //! Harvested quotients are **bimodal** rather than mediocre: on a real slate some
-//! retire well over 99% of positions while others retire a third, with nothing in
+//! retire almost every position while others retire a minority, with nothing in
 //! between that a single policy could straddle. So "is this worth arming?" has to
 //! be answered at build time, and it must be answered without a calibration
 //! haystack, because a filter that needs a sample of the document it is about to
@@ -31,10 +31,9 @@
 //! # Why the iteration never touches a byte
 //!
 //! The chain's alphabet is seven classes; the quotient's is 256 bytes. Stepping the
-//! chain byte by byte therefore re-derives, five hundred times, a distribution that
+//! chain byte by byte therefore re-derives, hundreds of times, a distribution that
 //! only ever had class resolution — and it costs `blocks × classes × 256` multiplies
-//! a step, which measured at **~50 ms per `Sieve::new`** and made the build, not the
-//! scan, the expensive half of this crate.
+//! a step, which made the build, not the scan, the expensive half of this crate.
 //!
 //! [`Spread`] is that arithmetic done once. Bytes of one class are interchangeable
 //! to the prior, so all that survives aggregation is *where a class can carry a

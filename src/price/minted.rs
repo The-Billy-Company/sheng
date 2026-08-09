@@ -5,95 +5,58 @@ use super::calibration::{Calibration, REGIMES};
 use crate::lattice::MAX_CONJUNCTS;
 use crate::shuffle::Kernel;
 
-/// Minted by `cargo run --release --example mint` over 64 MiB of this repository's
-/// real source, each kernel timed alone as the minimum of seven full traversals.
+/// Minted by `cargo run --release --example mint` over a large slice of real
+/// source, each kernel timed alone as the minimum of several full traversals.
 ///
 /// These numbers state the whole economics of this crate:
 ///
-/// * the sieve runs at **0.188 ns/B**, so it beats the engine's per-byte walk
-///   (1.262) by **6.7x** — a real advantage, and the reason any of this pays;
-/// * but the engine's *skip* runs at **0.0158 ns/B**, which is still **12x faster
-///   than the sieve**. Nothing that inspects every byte can front a `memchr`. That is
-///   not a defect in the kernel; it is the arithmetic that decides where it belongs.
+/// * the sieve beats the engine's per-byte walk by several times — a real
+///   advantage, and the reason any of this pays;
+/// * but the engine's *skip* is still an order of magnitude faster than the
+///   sieve. Nothing that inspects every byte can front a `memchr`. That is not
+///   a defect in the kernel; it is the arithmetic that decides where it belongs.
 ///
-/// `dfa_excursion` is solved from eleven lead bytes spanning two orders of magnitude
-/// of frequency rather than assumed, and the eleven solutions agree within 1.7x
-/// (7.26 to 12.12) around the mean of 9.75. They did **not** agree while the escape
-/// frequency was read at class resolution — the same eleven bytes then spanned 3.6 to
-/// 35.2 — so that 10x spread was the approximation talking, and closing it is what
-/// makes a single coefficient defensible here.
+/// `dfa_excursion` is solved from a slate of lead bytes spanning two orders of
+/// magnitude of frequency rather than assumed. Read at class resolution the
+/// inverted values disagree by about tenfold; read from a per-byte table they
+/// collapse into a narrow band — so that spread was the approximation talking,
+/// and closing it is what makes a single coefficient defensible here.
 ///
 /// The one-conjunct slot is unmeasured because the lattice harvest fills to
 /// [`MAX_CONJUNCTS`] whenever it yields anything at all, so no pattern on the mint's
 /// slate reaches it. [`Calibration::sieve_per_byte`] extrapolates it conservatively
 /// rather than treating the hole as free.
 ///
-/// Every figure is the minimum of seven full traversals and still carries roughly
-/// 10% run-to-run variance — this laptop routinely has ten coworker agents on it, so
-/// a re-mint that moves a coefficient by a tenth has not found anything. Because the
-/// gate is scale-invariant, that variance costs no decisions: a run under load
-/// inflates all four numbers together.
+/// Every figure still carries double-digit-percent run-to-run variance on a loaded
+/// machine. Because the gate is scale-invariant, that variance costs no decisions:
+/// a run under load inflates the absolute figures together.
 ///
-/// **Re-minted 2026-08-03** because the kernel changed under it. The old row priced
-/// the sieve at 0.514 ns/B, measured when [`crate::shuffle`] held the state in the
-/// register and ran one dependent shuffle per byte; holding the transition *function*
-/// instead lets four slices compose in parallel and took the same slate to 0.188.
-/// Nothing else in this row was meant to move — `dfa_skip`, `dfa_walk` and
-/// `dfa_excursion` time `regex-automata`, which did not change — and the ≤8% they
-/// drifted is the run-to-run variance above. They are re-taken anyway rather than
-/// spliced, because the gate reads *ratios* between these numbers and a ratio built
-/// from two different afternoons is not a measurement of anything.
+/// A re-mint is a fresh complete measurement, not a splice of old and new
+/// afternoons: the gate reads *ratios* between these numbers, and a ratio built
+/// from two different sessions is not a measurement of anything. The exception is
+/// `skip_excursion`, which is dimensionless and already self-normalized inside a
+/// single interleaved timing window — `mint`'s `paired` re-times both baselines
+/// against the pattern they divide, round by round — so it may be carried forward
+/// when the rest of the row is re-taken. The higher of consecutive paired mints is
+/// the one recorded, because an overstated excursion can only decline a skip.
 ///
-/// `skip_excursion` **is** spliced in, and it is the one coefficient here that may
-/// be. The rule above exists because a ratio between two absolute ns/B figures is
-/// only meaningful when both saw the same machine; this coefficient is not an
-/// absolute at all. It is dimensionless and already self-normalized *inside a single
-/// interleaved timing window* — `mint`'s `paired` re-times both its baselines against
-/// the pattern they divide, round by round — so it carries no dependence on the
-/// afternoon it was taken. That is checkable rather than asserted: two consecutive
-/// paired mints under load average 12 read `[9.245, 6.398]` and `[9.411, 6.823]`,
-/// while the unpaired sweep they replaced read `5.33` and `9.08` for the same
-/// instrument on consecutive runs. The higher pair is the one recorded, because an
-/// overstated excursion can only decline a skip.
-///
-/// **Re-minted whole 2026-08-09**, for the residency columns. Two coefficients here now
-/// carry a [`Residency`](super::Residency) index, and the measurement that earned them
-/// is the reason the row could not simply be extended in place:
-///
-/// | | cache (1 MiB) | memory (64 MiB) |
-/// |---|---|---|
-/// | `dfa_skip` | 0.0124 | 0.0175 |
-/// | `dfa_excursion` | 8.06 | 9.75 |
-///
-/// A `memchr` is **41% cheaper** per byte once the bytes are already resident, and a
-/// dense-DFA re-entry 21% cheaper. Both were reproduced across the run's two kernel
-/// passes (0.0124/0.0170 and 7.67/9.64), and the memory-resident `dfa_excursion` of
-/// 9.751 reproduces the 9.7495 this row carried before residency existed — which is the
-/// cross-check that says the new column is new information rather than a re-labeled old
-/// number.
-///
-/// `dfa_walk` and `sieve` carry no index, and that is a claim: a dependent-load walk
-/// waits on L1 for a table it has already pulled in, and the composition kernel is
-/// issue-bound at three operations a byte. Neither has headroom a hotter haystack could
-/// give it. `skip_excursion` is indexed for symmetry and is **not** expected to move —
-/// it re-enters sixteen blocks resident in either regime — and indeed instrument 1 came
-/// out inverted (7.79 cache against 6.96 memory), inside the spread of a coefficient
-/// minted as a maximum over a five-pattern slate.
+/// Two coefficients carry a [`Residency`](super::Residency) index because a
+/// `memchr` and a dense-DFA re-entry are both cheaper once the bytes are already
+/// resident; `dfa_walk` and `sieve` do not, because a dependent-load walk and an
+/// issue-bound composition kernel have no headroom a hotter haystack could give
+/// them. `skip_excursion` is indexed for symmetry and is not expected to move —
+/// it re-enters sixteen blocks resident in either regime.
 ///
 /// # The mint can be fooled, and was
 ///
-/// This column pair read *identical to four decimal places* on the first attempt, which
-/// looked exactly like the finding "residency does not matter on this silicon". It was
-/// not a finding. `mint` was aimed at this repository, which is **0.5 MiB**, so the
-/// 64 MiB request and the 1 MiB request both came back holding every byte in the tree:
-/// the two columns were the same bytes timed twice. `examples/mint.rs` now refuses a
-/// corpus under 32 MiB outright rather than printing a row that says the memory system
-/// does not exist — a row is a claim about a memory system, and a mint that never
-/// reached memory has no business making one.
-///
-/// The same trap explains a 30% "drift" that briefly looked like this row going stale.
-/// A cache-resident mint reads `dfa_excursion` near 6.7-8.1 and the shipped row said
-/// 9.75; the row was right, and the re-mint was measuring the other regime.
+/// A first residency mint read both columns identical, which looked like "residency
+/// does not matter on this silicon". It was not a finding: `mint` was aimed at a
+/// tree smaller than either requested working set, so both columns were the same
+/// bytes timed twice. `examples/mint.rs` now refuses a corpus too small to leave
+/// last-level cache rather than printing a row that says the memory system does
+/// not exist — a row is a claim about a memory system, and a mint that never
+/// reached memory has no business making one. The same trap makes a cache-resident
+/// re-mint look like the shipped memory-resident row went stale.
 pub const MACOS_AARCH64_NEON: Calibration = Calibration {
     arch: "aarch64",
     kernel: Kernel::Neon,
@@ -106,23 +69,13 @@ pub const MACOS_AARCH64_NEON: Calibration = Calibration {
     sieve: [0.0, 0.196478],
 };
 
-/// Native x86_64 Linux on an idle 13th-gen Intel box, 20 logical cores.
+/// Native x86_64 Linux, timed the same way as [`MACOS_AARCH64_NEON`].
 ///
-/// **Re-minted 2026-08-03**, same day and same procedure as [`MACOS_AARCH64_NEON`], and
-/// for the same reason: the prior row (2026-07-29) timed the serial-shuffle kernel,
-/// which [`crate::shuffle`] no longer runs — it now composes four slices in parallel
-/// against the held transition function. This row supersedes the old one outright
-/// rather than adjusting it; every figure below is a fresh, complete, same-machine
-/// measurement, not a splice.
-///
-/// With both rows on the composing kernel, they finally read as a comparison instead
-/// of an artifact of two different afternoons. Absolute walk cost is nearly identical
-/// (1.252 against arm64's 1.262 ns/B — a dependent-load chain either way), and
-/// SSSE3's `memchr` is, if anything, the *cheaper* accelerator relative to its own
-/// walk here (skip/walk 1.03% against NEON's 1.25%) — the opposite of what the old,
-/// kernel-mismatched row implied. The sieve itself is where the silicon still
-/// disagrees: 0.218 ns/B here against 0.188 on arm64, a ~16% gap the shared kernel
-/// shape does not erase. Inheriting one machine's numbers on the other would still
+/// With both rows on the composing kernel, they read as a comparison of silicon
+/// rather than of two different kernels. Absolute walk cost is nearly identical —
+/// a dependent-load chain either way — and relative skip/walk can even favor
+/// SSSE3; the sieve itself is where the architectures still disagree by a
+/// noticeable fraction. Inheriting one machine's numbers on the other would still
 /// misprice which patterns arm — which is the whole reason this crate keeps a row
 /// per (architecture, kernel) pair instead of one default.
 pub const LINUX_X86_64_SSSE3: Calibration = Calibration {

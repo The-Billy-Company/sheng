@@ -33,9 +33,9 @@ cd sheng
 cargo test --release
 ```
 
-Run the suite in release. The differential harness drives 30 000 mutated
-haystacks through both a vector kernel and a scalar reference, and a debug build
-turns a two-second gate into a coffee break.
+Run the suite in release. The differential harness drives a large battery of
+mutated haystacks through both a vector kernel and a scalar reference, and a
+debug build turns a short gate into a coffee break.
 
 ## The Test Loop
 
@@ -49,16 +49,16 @@ cargo run --release --example mint     # re-mint the prior and the calibration
 ```
 
 `survey` is a gate rather than a report: it fails if any pattern the model armed
-came out below 1.000x, so a coefficient that drifts generous fails loudly
-instead of quietly costing every caller a few percent. Run it before and after
-anything that touches `src/price/`.
+came out below unity, so a coefficient that drifts generous fails loudly
+instead of quietly costing every caller. Run it before and after anything that
+touches `src/price/`.
 
-Give it a real corpus. Each row is five samples of a min-of-five and is only
-called a loss when its whole interval sits below 1.000x, and below 8 MiB the
-survey declines to judge at all - a cache-resident corpus lets the engine's own
-accelerator run at tens of gigabytes a second, which no per-byte calibration
-describes. `SHENG_CORPUS=/path/to/a/big/tree` is how you get a verdict; against
-this repository alone you will correctly get a refusal.
+Give it a real corpus. Each row is several samples of a min-of-several and is
+only called a loss when its whole interval sits below unity, and a small
+working set declines to judge at all - a cache-resident corpus lets the
+engine's own accelerator run at memory bandwidth, which no per-byte
+calibration describes. `SHENG_CORPUS=/path/to/a/big/tree` is how you get a
+verdict; against this repository alone you will correctly get a refusal.
 
 ## The Constraints A Change Is Held To
 

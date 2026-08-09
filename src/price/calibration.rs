@@ -25,14 +25,14 @@ use crate::skip::Skip;
 /// bandwidth and in the cache-resident regime is not pinned by anything the mint
 /// measured.
 ///
-/// The gap is not academic. `panic!\(` prices at 1.33x and measures 1.47x over 22 MiB
-/// of real source, and measures **0.59x** over 0.3 MiB of it — same pattern, same
-/// machine, same coefficients. The engine's accelerated path cost 0.285 ns/B in the
-/// first case and 0.127 in the second, because its excursion re-enters a dense DFA
-/// whose transition table misses cache in one regime and hits it in the other. The
-/// sieve's own cost barely moved (0.194 to 0.222 ns/B), which is exactly why a single
-/// row could not describe both: the comparison is between a term that moves and a term
-/// that does not.
+/// The gap is not academic. `panic!\(` can price as a clear win over a large
+/// memory-resident corpus and measure as a clear loss over a cache-resident one —
+/// same pattern, same machine, same coefficients. The engine's accelerated path
+/// moves with residency because its excursion re-enters a dense DFA whose
+/// transition table misses cache in one regime and hits it in the other. The
+/// sieve's own cost barely moves, which is exactly why a single row could not
+/// describe both: the comparison is between a term that moves and a term that
+/// does not.
 ///
 /// So the uncomfortable half of the finding, stated where a caller will read it: the
 /// sieve's edge over an accelerated engine comes substantially from *that engine
@@ -73,12 +73,11 @@ impl Residency {
 ///   re-entering a transition table that may or may not be resident.
 /// * [`Calibration::dfa_walk`] is **not**. A dependent-load DFA walk waits on L1
 ///   latency for a table it has already pulled in, one state at a time, and measures
-///   1.262 ns/B on arm64 against 1.252 on x86_64 — the same number in both regimes for
+///   nearly the same on both architectures — the same number in both regimes for
 ///   the same reason it is nearly the same number on both machines.
 /// * [`Calibration::sieve`] is **not**. The composition kernel is issue-bound at three
-///   operations a byte and runs at 0.188 ns/B, an order of magnitude under the
-///   bandwidth a `memchr` saturates, so it has no headroom to gain from a hotter
-///   haystack.
+///   operations a byte and runs an order of magnitude under the bandwidth a
+///   `memchr` saturates, so it has no headroom to gain from a hotter haystack.
 ///
 /// Keeping them in one row rather than shipping two rows per machine is deliberate.
 /// A row is a claim about an (architecture, kernel) pair, and the invariance above is
@@ -101,8 +100,8 @@ pub struct Calibration {
     /// `regex-automata`'s dense DFA over bytes its start-state accelerator skips —
     /// effectively `memchr` throughput. Indexed by [`Residency`], because a byte
     /// scan this fast is bound by how quickly bytes arrive rather than by what it
-    /// does with them: 0.0158 ns/B out of memory on arm64 is 63 GB/s, which is
-    /// single-core DRAM bandwidth and not a property of the loop.
+    /// does with them: out of memory it saturates single-core DRAM bandwidth, which
+    /// is not a property of the loop.
     pub dfa_skip: [f64; REGIMES],
     /// The same DFA with no accelerator to skip with: the dependent-load walk. Not
     /// regime-indexed — see the type's own documentation.
@@ -112,13 +111,13 @@ pub struct Calibration {
     /// An accelerated engine does not pay for one byte when `memchr` finds a
     /// candidate — it enters the DFA, walks a short run, returns, and restarts the
     /// skip, and the restart is most of the cost at this granularity. Without this
-    /// term the model under-priced a common-byte accelerator by roughly 8x, which
-    /// declined patterns that genuinely paid.
+    /// term the model under-priced a common-byte accelerator by nearly an order of
+    /// magnitude, which declined patterns that genuinely paid.
     ///
     /// Indexed by [`Residency`] because the re-entry is exactly where the memory
     /// system shows up: the table the excursion walks into is the engine's *dense*
-    /// DFA, which is far too large for L1, so whether it is otherwise resident is the
-    /// difference between roughly 16 ns and 7 ns per escape.
+    /// DFA, which is far too large for L1, so whether it is otherwise resident
+    /// changes the escape cost by about a factor of two.
     pub dfa_excursion: [f64; REGIMES],
     /// The same quantity for the sieve's own [`crate::Skip`] loop, per instrument and
     /// per regime.
@@ -127,7 +126,7 @@ pub struct Calibration {
     /// excursion leaves `memchr`, enters a dense DFA whose table does not fit in
     /// L1, walks, and restarts the accelerator; the sieve's enters a sixteen-block
     /// quotient that does, and resumes a probe whose two tables are already in
-    /// registers. Measured, the sieve's classifier excursion is roughly 2.3x
+    /// registers. Measured, the sieve's classifier excursion is a few times
     /// cheaper — and charging it the engine's rate declined skips that paid.
     ///
     /// The outer index is [`crate::skip::Instrument`], because the instruments restart

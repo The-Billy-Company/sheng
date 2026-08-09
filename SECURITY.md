@@ -108,8 +108,8 @@ kind of report we want:
 - dispatch reports the kernel it chose, so a vector-versus-scalar differential
   cannot pass by quietly having tested the scalar path twice;
 - every vector path is exercised on real silicon - NEON on arm64, AVX2 and SSSE3
-  on x86_64 - against 30 000 mutated haystacks each, natively on all six
-  Windows/Linux/macOS × x86_64/arm64 targets `.github/workflows/native.yml`
+  on x86_64 - against a large battery of mutated haystacks each, natively on all
+  six Windows/Linux/macOS × x86_64/arm64 targets `.github/workflows/native.yml`
   covers, never under emulation;
 - a kernel dispatch would not have chosen is still differentiated, because
   `arch::kernel` returns the fastest kernel `price::MINTED` holds a row for and
@@ -117,14 +117,14 @@ kind of report we want:
   `tests/kernels.rs` and the `kernels` fuzz target both sweep
   `shuffle::available()` through the `shuffle::force` seam instead;
 - the set classifier is differentiated against a scalar statement of the same
-  membership over every byte value, 2048 pseudo-random sets, and a planted
-  escape at every offset of every length from 1 to 72;
+  membership over every byte value, a large battery of pseudo-random sets, and a
+  planted escape at every offset of every short length;
 - the skip differential asserts a skip lane was actually chosen before it
   compares, and draws haystacks from a narrow alphabet, because uniformly random
   bytes never let a skip loop reach its tail;
 - three `cargo-fuzz` targets carry the same properties under a real search
-  budget - 90 seconds each on every push, and a monthly campaign of two hours
-  each whose corpus is carried forward from the previous one. `fuzz/skip.rs`
+  budget on every push, and a longer monthly campaign whose corpus is carried
+  forward from the previous one. `fuzz/skip.rs`
   takes its oracle from the transition rows rather than from `find_scalar`,
   because both searchers read the tables `Skip::of` built and would agree
   exactly if the encoding were wrong. `fuzz/README.md` says what each holds.

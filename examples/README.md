@@ -56,29 +56,29 @@ in `price::MINTED` rather than replacing a global default.
 cargo run --release --example survey
 ```
 
-Times each pattern twice over 3,000 real documents — the engine alone, then the engine
-behind its sieve — and prints the arming decision beside the measured ratio, including
-the full arithmetic for every pattern that declined.
+Times each pattern twice over a large set of real documents — the engine alone, then
+the engine behind its sieve — and prints the arming decision beside the measured
+ratio, including the full arithmetic for every pattern that declined.
 
-**It asserts.** A row the model armed must come out above 1.000x, and a slate where
+**It asserts.** A row the model armed must come out above unity, and a slate where
 nothing arms fails too. That makes it the standing check on whichever `price::MINTED` row
 this machine resolves to: a coefficient that drifts generous fails loudly here instead of
-quietly costing every caller a few percent. Re-run it after any re-mint — and on a machine
-with no row at all, expect the honest version of failure, thirteen declines each naming
-the measurement nobody took.
+quietly costing every caller. Re-run it after any re-mint — and on a machine with no
+row at all, expect the honest version of failure: a decline for every pattern, each
+naming the measurement nobody took.
 
-**It also refuses.** Every timing is five samples of a min-of-five, so each row carries an
-interval rather than a number, and a row is only called a loss when the whole interval sits
-below 1.000x. A row whose interval straddles is reported undecided and asserts nothing,
-because the alternative is a gate that fires on the clock's own resolution — measured
-against this crate's own 0.3 MiB of source, three rows read as 0.6-0.9x losses that a real
-corpus prices at 1.1-1.5x wins.
+**It also refuses.** Every timing is several samples of a min-of-several, so each row
+carries an interval rather than a number, and a row is only called a loss when the whole
+interval sits below unity. A row whose interval straddles is reported undecided and
+asserts nothing, because the alternative is a gate that fires on the clock's own
+resolution — against a tiny tree, rows can read as losses that a real corpus prices as
+wins.
 
-Below 8 MiB it declines to judge the model at all. That is not a noise threshold: a
+A small working set declines to judge the model at all. That is not a noise threshold: a
 calibration is nanoseconds per byte read from memory, and a corpus small enough to sit in
-cache never reads from memory, so the engine's `memchr` accelerator runs at tens of
-gigabytes a second and beats every price the crate knows for reasons that have nothing to
-do with the sieve. Point `$SHENG_CORPUS` at a tree with real volume.
+cache never reads from memory, so the engine's `memchr` accelerator runs at memory
+bandwidth and beats every price the crate knows for reasons that have nothing to do with
+the sieve. Point `$SHENG_CORPUS` at a tree with real volume.
 
 ## `bench` — isolating where the time goes
 

@@ -209,7 +209,7 @@ struct Corpus<'a> {
 ///
 /// The escape-set model needs **per-byte** resolution, not per-class: within `Lower`,
 /// `a` is several times commoner than `f`, and pricing them alike is the difference
-/// between arming a 1.4x winner and arming a 0.44x loser. The class chain still
+/// between arming a clear winner and arming a clear loser. The class chain still
 /// carries the persistence structure; this carries the marginals.
 fn histogram(docs: &[Vec<u8>]) -> [f64; 256] {
     let mut n = [0u64; 256];

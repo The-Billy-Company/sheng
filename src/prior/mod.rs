@@ -334,8 +334,8 @@ mod tests {
 
     /// The classes patterns actually build runs out of are the ones a memoryless
     /// prior misprices worst, because their marginal share is small and their
-    /// clustering is extreme. `Lower` is only 1.3x because it already dominates
-    /// source text; a digit is 20x and a non-ASCII byte 66x.
+    /// clustering is extreme. `Lower` barely persists beyond its already-dominant
+    /// share; a digit and a non-ASCII byte persist by large factors.
     #[test]
     fn the_sparse_classes_are_the_ones_a_memoryless_prior_misprices() {
         for class in [Class::Digit, Class::Upper, Class::High] {

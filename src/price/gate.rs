@@ -12,11 +12,10 @@ pub const NOMINAL_LEN: f64 = 4096.0;
 /// How much a modeled speedup must beat 1.0 by before it counts as a decision
 /// rather than a coincidence.
 ///
-/// Every term the gate compares is a measurement, and
-/// [`MACOS_AARCH64_NEON`](super::MACOS_AARCH64_NEON) states its own spread out loud: roughly
-/// 10% run-to-run on the ns/B figures, ~21% on `dfa_excursion`. A verdict is a
-/// *ratio* of two of them and inherits both spreads — about 23% in quadrature at the
-/// worst pair — so arming at `speedup > 1.0` bets on differences the mint cannot
+/// Every term the gate compares is a measurement, and a minted row states its own
+/// run-to-run spread out loud — double-digit percent on the per-byte figures, more
+/// on `dfa_excursion`. A verdict is a *ratio* of two of them and inherits both
+/// spreads, so arming at `speedup > 1.0` bets on differences the mint cannot
 /// resolve. Scale invariance does not help here: it cancels a factor common to every
 /// coefficient, and this is the part that is *not* common.
 ///
@@ -27,13 +26,12 @@ pub const NOMINAL_LEN: f64 = 4096.0;
 ///
 /// Two patterns are this hazard in its pure form. `WalletService` and `foo[^\n]*bar`
 /// both elect a `memchr` skip over the *same byte the engine already accelerates
-/// on* — `['W']` against accelerator `"W"`, `['f']` against `"f"` — so the streaming
-/// halves of the two prices are the same loop over the same needle and cancel
-/// exactly. The entire modeled edge is [`super::Calibration::skip_excursion`] sitting
-/// 3.5% under `dfa_excursion`. Both scored 1.01x, both armed, and both then measured
-/// 0.78x and 0.94x against a cache-resident corpus and 1.12x and 1.06x against a
-/// memory-resident one — a coin flip, which is exactly what a 1% prediction drawn
-/// from ±20% inputs should look like.
+/// on* — so the streaming halves of the two prices are the same loop over the same
+/// needle and cancel exactly. The entire modeled edge is
+/// [`super::Calibration::skip_excursion`] sitting a hair under `dfa_excursion`.
+/// Both scored a near-parity win, both armed, and both then measured as losses or
+/// wins depending on residency — a coin flip, which is exactly what a near-parity
+/// prediction drawn from noisy inputs should look like.
 pub const MARGIN: f64 = 0.25;
 
 /// The share of haystacks of `len` bytes that survive a filter passing `f` of
@@ -182,7 +180,7 @@ mod tests {
         assert!(!at(0.99).pays(), "a modeled loss must never arm");
         assert!(
             !at(1.01).pays(),
-            "1.01x is the shape `WalletService` armed on: an edge the mint cannot see"
+            "a hair over parity is the shape `WalletService` armed on: an edge the mint cannot see"
         );
         assert!(
             !at(1.0 + MARGIN).pays(),

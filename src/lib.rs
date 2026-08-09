@@ -158,10 +158,13 @@ use prior::Chain;
 /// A conjunction of over-approximating quotients, run as one refutation pass.
 ///
 /// Cheap to clone-free share across threads: a sieve is immutable and holds no
-/// scan state, so one instance serves every document and every worker.
+/// scan state, so one instance serves every document and every worker. That is a
+/// `Send + Sync + 'static` promise, and the assertion at the foot of this file is
+/// what keeps a later field from retracting it.
 pub struct Sieve {
     lanes: Vec<Lane>,
     cost: CostFact,
+    _teeth: alloc::rc::Rc<u8>,
 }
 
 /// One conjunct, together with how it was decided this conjunct reads a haystack.
@@ -270,8 +273,9 @@ pub enum Gate {
 /// There is deliberately **no `Default`**. Two of these fields describe facts this
 /// crate can probe, and [`Residency`] describes one it cannot: whether the caller's
 /// haystacks are arriving from cache or from main memory changes which patterns pay by
-/// more than 2x, and guessing it silently is how `panic!\(` came to be armed at a
-/// predicted 1.33x and measured 0.59x. A caller states it or gets no sieve.
+/// a large factor, and guessing it silently is how a pattern can arm on a
+/// memory-resident mint and lose hard on a cache-resident corpus. A caller states it
+/// or gets no sieve.
 ///
 /// A caller whose silicon is not in [`price::MINTED`], or who knows something about
 /// their corpus the shipped sweep does not, overrides the field that is wrong rather
@@ -280,7 +284,7 @@ pub enum Gate {
 /// ```no_run
 /// # use sheng::{Policy, Residency, Sieve, prior::{self, Prior}};
 /// let mut policy = Policy::new(Residency::Memory); // a corpus larger than cache
-/// policy.len = 4096.0; // documents are smaller here than the 64 KiB nominal
+/// policy.len = 4096.0; // documents match the nominal length
 /// // Searching logs and nothing else: one measured corpus instead of the worst of
 /// // four, which is the only thing that ever *loosens* the gate.
 /// let logs = [Prior::Log.chain()];
@@ -544,3 +548,47 @@ fn rival_cost<D: Dfa>(dfa: &D, policy: &Policy<'_>) -> f64 {
         .calibration
         .rival_per_byte(dfa.accelerator(start), policy.freq, policy.residency)
 }
+
+// The thread promise, held by the compiler instead of by inference.
+//
+// `Send` and `Sync` are auto traits: a type has them because every one of its fields
+// does, which is exactly what makes them possible to *lose* in silence. One `Rc`
+// handle, one `Cell` memoizing a probe, one raw pointer into a mapped table, and a
+// sieve stops crossing thread boundaries — with the breakage landing on the caller who
+// believed the documentation rather than on the commit that took it away. Naming the
+// surface here moves that failure to the commit that causes it.
+//
+// A `const` item rather than a `#[test]`, for the same reason the `no_std` job builds
+// bare-metal targets: the promise is not conditional on a test build. This is checked
+// in every feature combination and on every target this crate compiles for, including
+// the ones with no harness to run a test with and no threads to spawn.
+//
+// `Sieve` and `BuildError` are held to `'static` on top of it. They are the two a
+// caller moves *into* a worker rather than merely shares with one — a sieve built once
+// and sent to a pool, an error carried back across a join — and neither could do that
+// while borrowing from the automaton it was built from. `'static` is the part that says
+// `Sieve::of_dfa` hands back a value rather than a view; it is not implied by the
+// signature, only by the fields, which is the same thing this whole block is about.
+const _: () = {
+    const fn shared<T: Send + Sync>() {}
+    const fn owned<T: Send + Sync + 'static>() {}
+
+    owned::<Sieve>();
+    owned::<BuildError>();
+
+    // The rest of the public surface, in the order the re-exports above declare it.
+    shared::<Quotient>();
+    shared::<Residency>();
+    shared::<Decline>();
+    shared::<Projection>();
+    shared::<Instrument>();
+    shared::<Skip>();
+    shared::<Gate>();
+    shared::<Policy<'static>>();
+    shared::<Calibration>();
+    shared::<CostFact>();
+    shared::<Chain>();
+    shared::<prior::Class>();
+    shared::<prior::Prior>();
+    shared::<shuffle::Kernel>();
+};

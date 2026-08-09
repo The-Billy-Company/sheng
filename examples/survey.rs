@@ -8,7 +8,7 @@
 //! * **refuted** — the share of genuinely match-free documents the sieve proved
 //!   match-free. This is the predicted rate audited against real bytes.
 //! * **end to end** — wall time for `regex-automata` alone over every document,
-//!   against sieve-then-`regex-automata`-on-survivors. Below 1.00x the sieve is
+//!   against sieve-then-`regex-automata`-on-survivors. Below unity the sieve is
 //!   overhead and should not have armed.
 //!
 //! Every timing is an interval, not a number, and the verdict is taken on the interval.
@@ -19,9 +19,9 @@
 //! The **regime is read off the corpus**, not configured: this example knows how many
 //! bytes it is about to hand the engine, so it declares `Residency::Cache` or
 //! `Residency::Memory` to `Policy` accordingly. That is worth knowing about the two
-//! numbers this prints, because it used to refuse outright below 8 MiB — a corpus that
-//! fits in cache never reads from memory, and a per-byte price measured against memory
-//! could not describe it. Running this against a small tree and a large one now
+//! numbers this prints, because it used to refuse small corpora outright — a corpus
+//! that fits in cache never reads from memory, and a per-byte price measured against
+//! memory could not describe it. Running this against a small tree and a large one now
 //! exercises two columns of one calibration rather than one column and a disclaimer.
 //!
 //! `SHENG_SURVEY_REQUIRE_CORPUS=1` turns "declined to judge" into a hard failure — the

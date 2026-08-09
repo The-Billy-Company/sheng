@@ -96,16 +96,17 @@ fn waiving_the_gate_still_builds_on_an_unmeasured_machine() {
 ///
 /// `WalletService` is the demonstration again, and the round trip is the point. It
 /// stopped moving when the sieve learned to skip its own start block and armed on both
-/// machines; it moves once more now that [`sheng::price::MARGIN`] refuses the 1.01x
-/// that arming rested on. Which is the honest shape of the claim: the skip it learned
-/// buys nothing against an engine already `memchr`-ing the identical byte, and on
-/// silicon where that `memchr` is no faster than a walk the sieve does not need the
-/// skip at all — it wins 6.7x on the composition kernel alone.
+/// machines; it moves once more now that [`sheng::price::MARGIN`] refuses the
+/// near-parity edge that arming rested on. Which is the honest shape of the claim: the
+/// skip it learned buys nothing against an engine already `memchr`-ing the identical
+/// byte, and on silicon where that `memchr` is no faster than a walk the sieve does
+/// not need the skip at all — it wins several times over on the composition kernel
+/// alone.
 ///
 /// The hex-literal scan it borrowed in the interim is *not* kept as a second case: it
-/// prices at 1.247x on the handicapped machine, inside the margin, and a test whose
-/// demonstration sits a thousandth from its own threshold is a test that will fail on
-/// somebody else's afternoon.
+/// prices inside the margin on the handicapped machine, and a test whose demonstration
+/// sits a hair from its own threshold is a test that will fail on somebody else's
+/// afternoon.
 #[test]
 fn a_caller_can_price_a_machine_the_crate_never_measured() {
     // A hypothetical target with no fast byte scan: skipping costs what walking costs.
@@ -205,12 +206,12 @@ fn the_prior_reaches_the_decision() {
 /// `NOMINAL_LEN` at 4 KiB rather than at a line: judging arming over a whole document
 /// is deliberate margin against a fallthrough estimate known to be optimistic.
 ///
-/// This test asserted the opposite until 2026-08-03, and never noticed, because it was
-/// **vacuous**: every pattern in `ARMING` declined at the nominal length, so the
-/// `continue` below skipped all four and the assertion had never once run. Teaching
-/// the sieve to skip its start block armed two of them, the body executed for the
-/// first time, and it disagreed with `price::survival` immediately. Hence the census —
-/// a test that can quietly stop testing is worse than no test.
+/// This test asserted the opposite until the skip kernel landed, and never noticed,
+/// because it was **vacuous**: every pattern in `ARMING` declined at the nominal
+/// length, so the `continue` below skipped all four and the assertion had never once
+/// run. Teaching the sieve to skip its start block armed two of them, the body
+/// executed for the first time, and it disagreed with `price::survival` immediately.
+/// Hence the census — a test that can quietly stop testing is worse than no test.
 #[test]
 fn longer_documents_are_harder_to_justify() {
     if !sheng::price::active(AT).is_measured(AT) {

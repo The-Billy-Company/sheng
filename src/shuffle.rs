@@ -12,9 +12,9 @@
 //! The obvious thing to keep in the register is the **state**, broadcast to every
 //! lane. It works, and it is what this kernel used to do — but it is a dead end,
 //! because each shuffle needs the previous shuffle's answer. One byte per shuffle
-//! *latency*, forever. Measured on an M4 that is 2 cycles a byte, and no amount of
-//! unrolling moves it: there is one dependency chain and it is as long as the
-//! document.
+//! *latency*, forever. That is a cycle or two per byte on current silicon, and no
+//! amount of unrolling moves it: there is one dependency chain and it is as long
+//! as the document.
 //!
 //! So the register holds the **function** instead. Seed it with the identity
 //! `[0,1,…,15]` and the same single shuffle per byte now composes rather than
@@ -62,12 +62,11 @@
 //! Deleting the max altogether is possible and **measured not to be worth it**. Give
 //! every accepting block a self-loop and "did it ever accept" collapses into the
 //! final state, so the per-byte work drops from load+shuffle+max to load+shuffle.
-//! That variant benchmarks at 0.131 ns/byte against this one's 0.134 — inside the
-//! noise, because the loop is bound by the row load and the shuffle port, not by the
-//! spare integer op riding beside them. It would have cost a second, trapping form
-//! of every quotient (the selectivity chain needs the honest one, since an
-//! absorbing accept drives its long-run rate to 1) for two percent. Left undone
-//! deliberately.
+//! That variant benchmarks inside the noise of this one, because the loop is bound
+//! by the row load and the shuffle port, not by the spare integer op riding beside
+//! them. It would have cost a second, trapping form of every quotient (the
+//! selectivity chain needs the honest one, since an absorbing accept drives its
+//! long-run rate to 1) for a rounding error. Left undone deliberately.
 
 #[cfg(any(
     target_arch = "aarch64",
@@ -107,17 +106,16 @@ pub(crate) const CHUNK: usize = 256;
 ///
 /// This is the ILP dial, and it is set by the shuffle unit rather than by taste: a
 /// chain issues one shuffle every `latency` cycles, so it takes about `latency`
-/// chains to saturate a unit that retires one shuffle per cycle. Four covers the
-/// 2-cycle `tbl` on Apple silicon and the 1-cycle `pshufb` on x86_64 with margin,
-/// while keeping the working set — `WAYS` function registers plus `WAYS` max
-/// registers plus the rows in flight — well inside sixteen architectural vector
-/// registers, so nothing spills on the narrower of the two targets.
+/// chains to saturate a unit that retires one shuffle per cycle. Four covers a
+/// two-cycle `tbl` and a one-cycle `pshufb` with margin, while keeping the working
+/// set — `WAYS` function registers plus `WAYS` max registers plus the rows in
+/// flight — well inside sixteen architectural vector registers, so nothing spills
+/// on the narrower of the two targets.
 ///
-/// Swept on an M4 over 32 MiB of real source (`cargo run --release --example bench`,
-/// geomean ns/byte): two 0.160, **four 0.134**, six 0.133, eight 0.140. Two is short
-/// of covering the latency and eight starts costing more in register pressure and
-/// short-document setup than the extra chains return, so the curve is flat exactly
-/// where the latency argument says it should be.
+/// Swept with `cargo run --release --example bench` over real source: two chains
+/// under-cover the latency, six and four sit flat, and eight starts costing more
+/// in register pressure and short-document setup than the extra chains return —
+/// so the curve is flat exactly where the latency argument says it should be.
 ///
 /// Present only where there is a byte shuffle to issue; see [`crate::arch`] for the
 /// condition and for every other site that shares it.

@@ -13,9 +13,9 @@
 //! or logs was being priced under a model of somebody else's Rust. The three corpora
 //! beside it are not variations on it; they disagree with it about the coarsest thing
 //! a chain can say. Source indentation makes `Space` the most self-following class in
-//! the tree (0.452); English prose puts exactly one space between words, so the same
-//! class is *anti*-persistent there (0.026 against a 0.170 marginal). A model that
-//! gets that backwards misprices every `[ ]{2,}` on either corpus.
+//! the tree; English prose puts exactly one space between words, so the same class
+//! is *anti*-persistent there. A model that gets that backwards misprices every
+//! `[ ]{2,}` on either corpus.
 //!
 //! All four are swept together by default — see
 //! [`DEFAULT_CHAINS`](super::DEFAULT_CHAINS) — because the gate takes the worst case
@@ -27,9 +27,9 @@
 //! # Thin rows absorb
 //!
 //! A row is conditioned on its class occurring, and a class that barely occurs in a
-//! corpus gets a row built from a handful of samples: prose holds nine non-ASCII bytes
-//! in eleven megabytes, and the loghub sample holds none whatsoever. Counted straight,
-//! the first prints ninths and the second prints a row of zeros, which is not a
+//! corpus gets a row built from a handful of samples: prose holds almost no non-ASCII
+//! bytes, and the loghub sample holds none whatsoever. Counted straight, the first
+//! prints fractions of a handful and the second prints a row of zeros, which is not a
 //! distribution.
 //!
 //! So a row under the mint's support floor is written **absorbing** — the class always
@@ -43,26 +43,15 @@ use super::Chain;
 
 /// The measured first-order chain over real source bytes.
 ///
-/// Minted on Darwin 25.5.0 arm64, 2026-07-29, over 6,418 source files (64.1 MiB) of
-/// this repository — Rust, Zig, Go, Python, TypeScript, SQL, Swift, Markdown, TOML.
-/// Re-mint with `cargo run --release --example mint` from the repository root.
+/// Minted over a polyglot slice of this repository. Re-mint with
+/// `cargo run --release --example mint` from the repository root; the
+/// `host` / commit stamp travels with the numbers, not this prose.
 ///
-/// The diagonal is the reason this type exists. Each class's chance of repeating,
-/// against its marginal share:
-///
-/// | class | marginal | repeats | ratio |
-/// |---|---|---|---|
-/// | `Space` | 0.1817 | 0.4517 | 2.5x |
-/// | `Break` | 0.0271 | 0.1048 | 3.9x |
-/// | `Lower` | 0.5703 | 0.7683 | 1.3x |
-/// | `Upper` | 0.0560 | 0.3565 | 6.4x |
-/// | `Digit` | 0.0186 | 0.3863 | **20.8x** |
-/// | `Punct` | 0.1325 | 0.2524 | 1.9x |
-/// | `High`  | 0.0139 | 0.9167 | **66.0x** |
-///
-/// A memoryless prior therefore under-prices a `k`-byte digit run by about `20.8^k`
-/// — which is precisely the error that let a filter rejecting essentially nothing
-/// look like one rejecting everything.
+/// The diagonal is the reason this type exists. Digits and non-ASCII bytes
+/// repeat far above their marginal share; letters less so. A memoryless prior
+/// therefore under-prices a long digit run by many orders of magnitude — which
+/// is precisely the error that let a filter rejecting essentially nothing look
+/// like one rejecting everything.
 ///
 /// `Space` never reaching `Break` is real rather than a rounding artifact: this tree
 /// is linted, so trailing whitespace before a newline is effectively absent.
@@ -93,10 +82,10 @@ pub const SOURCE: Chain = Chain {
 /// fronting) and one whose accelerator earns its keep (not worth fronting). Arming on
 /// the class average did both wrong at once.
 ///
-/// Minted alongside [`SOURCE`] on the same 64.1 MiB of real source. The evidence that
-/// the resolution matters is in the excursion solver's own spread: read at class
-/// resolution, the eleven lead bytes it inverts disagreed by 10x (3.6 to 35.2); read
-/// from this table they agree within 1.7x (7.06 to 11.78). The variance was the
+/// Minted alongside [`SOURCE`] on the same corpus. The evidence that the
+/// resolution matters is in the excursion solver's own spread: read at class
+/// resolution, inverted lead-byte values disagree by about tenfold; read from
+/// this table they collapse into a narrow band. The variance was the
 /// approximation, not the measurement.
 pub const SOURCE_BYTES: [f64; 256] = [
     0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000,
@@ -135,34 +124,22 @@ pub const SOURCE_BYTES: [f64; 256] = [
 
 /// English literary prose, as a first-order chain.
 ///
-/// Minted 2026-08-09 over the eighteen plain-text Project Gutenberg books of the NLTK
-/// `gutenberg` corpus (11.2 MiB) — Austen, Melville, Milton, Shakespeare, Whitman,
-/// Chesterton, the King James Bible. Pinned by commit and re-minted by
-/// `.github/workflows/priors.yml`; see it for the exact tree.
+/// Minted over the NLTK `gutenberg` plain-text books. Pinned by commit and
+/// re-minted by `.github/workflows/priors.yml`; see it for the exact tree.
 ///
 /// The disagreement with [`SOURCE`] is not a matter of degree. Prose separates words
-/// with exactly one space, so `Space` is **anti**-persistent here — 0.026 against a
-/// 0.170 marginal, a 0.2x ratio — where source indentation makes it the most
-/// self-following class in the tree at 0.452. Under the source chain a run of spaces
-/// is the likeliest thing in the document; under this one it is nearly impossible.
+/// with exactly one space, so `Space` is **anti**-persistent here — where source
+/// indentation makes it the most self-following class in the tree. Under the source
+/// chain a run of spaces is the likeliest thing in the document; under this one it
+/// is nearly impossible.
 ///
-/// | class | marginal | repeats | ratio |
-/// |---|---|---|---|
-/// | `Space` | 0.1696 | 0.0259 | **0.2x** |
-/// | `Break` | 0.0259 | 0.3239 | 12.5x |
-/// | `Lower` | 0.7313 | 0.7576 | 1.0x |
-/// | `Upper` | 0.0256 | 0.1258 | 4.9x |
-/// | `Digit` | 0.0089 | 0.4005 | **44.8x** |
-/// | `Punct` | 0.0386 | 0.0711 | 1.8x |
-/// | `High`  | 0.0000 | 1.0000 | absorbing |
-///
-/// `Break` at 12.5x is paragraph breaks; `Digit` at 44.8x is chapter numbers and
-/// years, which arrive in short bursts and nowhere else. `High` absorbs because this
-/// corpus is 7-bit ASCII throughout — nine non-ASCII bytes in eleven megabytes is not
-/// a measurement, so the row reads as the worst case instead of as nine samples. A
+/// `Break` persistence is paragraph breaks; `Digit` persistence is chapter numbers
+/// and years, which arrive in short bursts and nowhere else. `High` absorbs because
+/// this corpus is essentially 7-bit ASCII — a handful of non-ASCII bytes is not a
+/// measurement, so the row reads as the worst case instead of as those samples. A
 /// caller searching UTF-8 prose with curly quotes and accents wants their own mint
-/// there; the default sweep meanwhile prices it under [`SOURCE`]'s 0.9167, which is
-/// measured.
+/// there; the default sweep meanwhile prices it under [`SOURCE`]'s measured `High`
+/// row.
 #[rustfmt::skip]
 pub const PROSE: Chain = Chain {
     //     Space     Break     Lower     Upper     Digit     Punct      High
@@ -180,8 +157,8 @@ pub const PROSE: Chain = Chain {
 
 /// Marginal frequency of every byte value over the same corpus as [`PROSE`].
 ///
-/// Reads as English rather than as code: `e` at 0.094 against `SOURCE`'s 0.074, and
-/// almost nothing above 0x7F. The punctuation is the tell — `{`, `<`, `;` and `=`
+/// Reads as English rather than as code: letter frequencies shift, and almost
+/// nothing sits above `0x7F`. The punctuation is the tell — `{`, `<`, `;` and `=`
 /// round to zero here and are among the commonest bytes in a code tree, which is
 /// exactly the escape set a rival engine would have been priced on.
 pub const PROSE_BYTES: [f64; 256] = [
@@ -221,29 +198,19 @@ pub const PROSE_BYTES: [f64; 256] = [
 
 /// Machine-generated JSON, as a first-order chain.
 ///
-/// Minted 2026-08-09 over the 1,911 documents (26.9 MiB) of `simdjson/simdjson-data` —
-/// the corpus that project benchmarks its parsers against, so it spans pretty-printed
-/// meshes, minified API dumps, GeoJSON, and Twitter payloads rather than one shape of
-/// object. Pinned by commit in `.github/workflows/priors.yml`.
+/// Minted over `simdjson/simdjson-data` — the corpus that project benchmarks its
+/// parsers against, so it spans pretty-printed meshes, minified API dumps, GeoJSON,
+/// and Twitter payloads rather than one shape of object. Pinned by commit in
+/// `.github/workflows/priors.yml`.
 ///
 /// This is the corpus where **nothing is rare**, and that makes it the hardest of the
-/// four for a filter to clear. Every class repeats more often than it occurs, four of
-/// them above 0.67, because structure is what JSON is made of: indentation runs,
+/// four for a filter to clear. Every class repeats more often than it occurs, most of
+/// them heavily, because structure is what JSON is made of: indentation runs,
 /// numeric arrays, key strings, and UTF-8 string bodies each persist.
 ///
-/// | class | marginal | repeats | ratio |
-/// |---|---|---|---|
-/// | `Space` | 0.1714 | 0.6988 | 4.1x |
-/// | `Break` | 0.0112 | 0.0354 | 3.2x |
-/// | `Lower` | 0.3106 | 0.7550 | 2.4x |
-/// | `Upper` | 0.0208 | 0.3115 | 15.0x |
-/// | `Digit` | 0.2431 | 0.7641 | 3.1x |
-/// | `Punct` | 0.2298 | 0.6763 | 2.9x |
-/// | `High`  | 0.0131 | 0.9209 | 70.2x |
-///
-/// `Digit` is the one to read against [`SOURCE`]: a quarter of these bytes are digits
-/// and three quarters of a digit's successors are digits again, where a code tree puts
-/// digits at 1.9% and 0.386. So `[0-9]{3}-[0-9]{4}` — a phone number, and about as
+/// `Digit` is the one to read against [`SOURCE`]: a large share of these bytes are
+/// digits and most of a digit's successors are digits again, where a code tree puts
+/// digits near the noise floor. So `[0-9]{3}-[0-9]{4}` — a phone number, and about as
 /// selective as a pattern gets in source — refutes almost nothing in a mesh file.
 #[rustfmt::skip]
 pub const JSON: Chain = Chain {
@@ -262,10 +229,9 @@ pub const JSON: Chain = Chain {
 
 /// Marginal frequency of every byte value over the same corpus as [`JSON`].
 ///
-/// The digits are the shape of it: `0` at 0.046 and every other digit near 0.019,
-/// against 0.005 and under in a code tree. `"` at 0.094 is the commonest non-space
-/// byte in the corpus, which is what makes a quote a hopeless thing to accelerate on
-/// here and a fine one in prose.
+/// The digits are the shape of it: far more frequent than in a code tree. `"` is
+/// among the commonest non-space bytes, which is what makes a quote a hopeless
+/// thing to accelerate on here and a fine one in prose.
 pub const JSON_BYTES: [f64; 256] = [
     0.00001002, 0.00000089, 0.00000039, 0.00000004, 0.00000025, 0.00000007, 0.00000007, 0.00000000,
     0.00000000, 0.00000959, 0.01087278, 0.00000018, 0.00000007, 0.00032545, 0.00000057, 0.00000018,
@@ -303,37 +269,22 @@ pub const JSON_BYTES: [f64; 256] = [
 
 /// Production service logs, as a first-order chain.
 ///
-/// Minted 2026-08-09 over the sixteen system samples (4.3 MiB) of `logpai/loghub` —
-/// Android, Apache, BGL, Hadoop, HDFS, HealthApp, HPC, Linux, Mac, OpenSSH,
-/// OpenStack, Proxifier, Spark, Thunderbird, Windows, Zookeeper. Sixteen real
-/// emitters rather than sixteen samples of one, which is the only way a log prior is
-/// about logs and not about one team's formatter. Pinned by commit in
-/// `.github/workflows/priors.yml`.
-///
-/// | class | marginal | repeats | ratio |
-/// |---|---|---|---|
-/// | `Space` | 0.0979 | 0.1151 | 1.2x |
-/// | `Break` | 0.0139 | 0.4839 | 34.8x |
-/// | `Lower` | 0.4296 | 0.7687 | 1.8x |
-/// | `Upper` | 0.0689 | 0.4049 | 5.9x |
-/// | `Digit` | 0.2727 | 0.6337 | 2.3x |
-/// | `Punct` | 0.1170 | 0.0588 | **0.5x** |
-/// | `High`  | 0.0000 | 1.0000 | absorbing |
+/// Minted over the `logpai/loghub` system samples — many real emitters rather than
+/// many samples of one, which is the only way a log prior is about logs and not
+/// about one team's formatter. Pinned by commit in `.github/workflows/priors.yml`.
 ///
 /// `Punct` is the one that is genuinely backwards from every other corpus here: a log
 /// line is fields separated by single delimiters, so punctuation alternates with
-/// content rather than clustering, and it is *anti*-persistent at 0.5x where source
-/// text runs 1.9x and JSON 2.9x. Meanwhile a timestamp puts a quarter of every line
-/// in `Digit`, at 0.634 persistence — so `[0-9]{4}` refutes essentially no log line
-/// and `[;:]{2}` refutes nearly all of them, which is the reverse of the source
-/// ordering.
+/// content rather than clustering, and it is *anti*-persistent where source text and
+/// JSON both cluster. Meanwhile a timestamp puts a large share of every line in
+/// `Digit` at high persistence — so `[0-9]{4}` refutes essentially no log line and
+/// `[;:]{2}` refutes nearly all of them, which is the reverse of the source ordering.
 ///
-/// Two honest caveats about the corpus rather than about logs. `Break` at 34.8x is
-/// line endings: fifteen of the sixteen samples are checked in CRLF, so half of every
-/// `Break` byte's successors are `Break` again. Errs pessimistic — a chain that
-/// over-states persistence over-states fallthrough and can only decline — but a
-/// caller whose logs are LF should expect nearer 0.03. `High` absorbs because these
-/// samples hold no non-ASCII byte at all, on the same terms as [`PROSE`].
+/// Two honest caveats about the corpus rather than about logs. `Break` persistence
+/// is inflated by CRLF line endings in most samples — errs pessimistic, since a
+/// chain that over-states persistence over-states fallthrough and can only decline —
+/// but a caller whose logs are LF should expect far less. `High` absorbs because
+/// these samples hold no non-ASCII byte at all, on the same terms as [`PROSE`].
 #[rustfmt::skip]
 pub const LOG: Chain = Chain {
     //     Space     Break     Lower     Upper     Digit     Punct      High
@@ -351,10 +302,9 @@ pub const LOG: Chain = Chain {
 
 /// Marginal frequency of every byte value over the same corpus as [`LOG`].
 ///
-/// `0` at 0.054 and `1` at 0.051 are timestamps and process ids; `:` at 0.005 and `,`
-/// at 0.022 are the delimiters that make [`LOG`]'s `Punct` row anti-persistent. Every
-/// byte above 0x7F is zero, which is what [`LOG`]'s absorbing `High` row states in the
-/// other direction.
+/// Digits dominate via timestamps and process ids; `:` and `,` are the delimiters
+/// that make [`LOG`]'s `Punct` row anti-persistent. Every byte above `0x7F` is zero,
+/// which is what [`LOG`]'s absorbing `High` row states in the other direction.
 pub const LOG_BYTES: [f64; 256] = [
     0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000, 0.00000000,
     0.00000000, 0.00000000, 0.00717378, 0.00000000, 0.00000000, 0.00672546, 0.00000000, 0.00000000,
