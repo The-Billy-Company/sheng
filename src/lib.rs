@@ -59,8 +59,8 @@
 //! `HS_FLAG_PREFILTER` has shipped the superset-plus-confirmation contract for
 //! years. What is narrow here is the SP-lattice *harvest* as the source of the
 //! approximation, the register-resident conjunction selection, and the
-//! training-free gate below. Notably, DFA-trees also measured **+26%** in the case
-//! where nothing is rejected — the hazard that gate exists to refuse.
+//! training-free gate below. Notably, DFA-trees also measured a clear slowdown
+//! when nothing is rejected — the hazard that gate exists to refuse.
 //!
 //! # Why it sometimes refuses
 //!
@@ -521,6 +521,19 @@ impl Sieve {
 /// Taking the worst case of one and the realistic case of the other is not mixing
 /// worlds: it is pessimism where the sieve makes a promise and realism where the
 /// rival does.
+// The README's Rust blocks, held to the compiler. `cfg(doctest)` is set only while
+// rustdoc is collecting doctests, so this item is never built into the library and
+// never reaches the rendered documentation — which is the point: the module docs above
+// are the crate's own argument and the README is a second telling of it for a different
+// reader, so `#![doc = include_str!(..)]` at the crate root would duplicate every claim
+// to buy this. What is bought is the one thing the two tellings must share: a README
+// snippet that stops compiling fails a test rather than sitting there as a paragraph
+// nobody re-ran. Every `Sieve` constructor in there took one fewer argument than it does
+// now, and nothing said so.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+pub struct Readme;
+
 fn rival_cost<D: Dfa>(dfa: &D, policy: &Policy<'_>) -> f64 {
     let Some(start) = dfa.start() else {
         // Cannot tell what the engine will do, so assume the best case for it and let

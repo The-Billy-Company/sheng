@@ -59,18 +59,19 @@ the SSSE3 probe is read from `CPUID` directly rather than through
 `std::arch::is_x86_feature_detected!`, so nothing of sheng's own is lost. An
 allocator is still required; the transition tables are `Vec`-shaped.
 
-| feature | default | what it adds |
-|---|---|---|
-| `regex-automata` | on | the parser, and the `Dfa` impl for the engine that runs the confirming search |
-| `std` | on | `memchr`'s AVX2 runtime dispatch, and `regex-automata`'s own `std` leg |
+Both features are on by default, and each adds only what its name says:
+
+- **`regex-automata`** — the parser, and the `Dfa` impl for the engine that runs
+  the confirming search.
+- **`std`** — `memchr`'s AVX2 runtime dispatch, and `regex-automata`'s own
+  `std` leg.
 
 [dfa]: https://docs.rs/sheng/latest/sheng/struct.Sieve.html#method.of_dfa
 
 ## Platforms
 
-Six targets, x86_64 and arm64, all equally first-class: Linux (`ubuntu-24.04`,
-`ubuntu-24.04-arm`), macOS (`macos-15-intel`, `macos-15`), Windows
-(`windows-2025`, `windows-11-arm`).
+Six targets, x86_64 and arm64, all equally first-class: Linux, macOS, and
+Windows on each.
 
 `src/arch/` dispatches on `target_arch` alone, never the OS: one NEON kernel and
 two runtime-probed x86_64 kernels — AVX2, SSSE3 — behind all six.
@@ -83,13 +84,17 @@ against real source text.
 Build the sieve once, then ask it about every document:
 
 ```rust
-use sheng::Sieve;
+# fn confirm_with_the_real_engine(_doc: &[u8]) {}
+# let documents: [&[u8]; 0] = [];
+use sheng::{Residency, Sieve};
 
-let Ok(sieve) = Sieve::new(r"#[0-9a-fA-F]{6}") else {
-    return search_every_document(); // no sieve; just run the engine
+// `Residency` is the one input the crate cannot probe and refuses to guess:
+// whether these bytes arrive from cache or from main memory. See Calibration.
+let Ok(sieve) = Sieve::new(r"#[0-9a-fA-F]{6}", Residency::Memory) else {
+    return; // no sieve; just run the engine over everything
 };
 
-for doc in &documents {
+for doc in documents {
     if sieve.refutes(doc) {
         continue; // provably match-free - the engine never sees it
     }
@@ -107,25 +112,30 @@ automaton between filter and confirming search, so the gate also prices the
 rival off the engine that will actually run:
 
 ```rust
-let sieve = sheng::Sieve::of_dfa(&dfa)?;
+# use regex_automata::dfa::dense;
+# let dfa = dense::DFA::new(r"#[0-9a-fA-F]{6}").unwrap();
+use sheng::{Residency, Sieve};
+
+let sieve = Sieve::of_dfa(&dfa, Residency::Memory);
 ```
 
 ## The Cases That Pay
 
 Sheng pays when one pattern crosses many documents and most don't match — a
-corpus scan, a log sweep, a rule slate over a stream. The gate answers in about
-half a millisecond. Three properties arm a pattern:
+corpus scan, a log sweep, a rule slate over a stream. The gate answers in a
+fraction of a millisecond. Three properties arm a pattern:
 
-- **A distinctive alphabet** — `[0-9]{3}-[0-9]{4}` runs 4.42x; digits and a
+- **A distinctive alphabet** — `[0-9]{3}-[0-9]{4}` is the archetype; digits and a
   hyphen refute almost every position in prose or code.
-- **A rival with no cheap accelerator** — `panic!\(` runs 1.47x on arm64; its
+- **A rival with no cheap accelerator** — `panic!\(` is the other face; its
   `memchr` lead byte is too common to skip past.
 - **Documents in the low kilobytes** — survival rises with length, so a filter
-  clearing 4 KiB may keep 64 KiB on one surviving position.
+  that clears a short document may keep a long one on a single surviving
+  position.
 
-A rare lead byte is the reliable, correct decline: `regex-automata` crosses a
-document at 0.0158 ns/B via `memchr`, against the sieve's 0.188. Nothing that
-inspects every byte beats a twelve-times-faster skip.
+A rare lead byte is the reliable, correct decline: `regex-automata` can cross a
+document via `memchr` an order of magnitude faster than the sieve walks it.
+Nothing that inspects every byte beats a skip that cheap.
 
 ## The Wrong Tool for the Job
 
@@ -142,10 +152,18 @@ Two measurements decide arming, neither universal: what three loops cost on this
 machine, and what the bytes look like. Both live in `Policy`; override whichever
 is wrong for your corpus or silicon.
 
+A third input is nobody's measurement, so `Policy` has no `Default` and
+`Residency` is an argument instead. Whether the haystacks arrive from cache or
+from memory changes which patterns pay by a large factor — the engine's `memchr`
+is cheapest exactly where the sieve is least competitive — and guessing it
+silently is how a pattern can arm on a memory-resident mint and lose hard on a
+cache-resident corpus. A caller states it or gets no sieve.
+
 ```rust
-let mut policy = sheng::Policy::default();
-policy.len = 4096.0; // override the 64 KiB default
-let sieve = sheng::Sieve::with(r"\bTODO\b", &policy);
+# use sheng::{Policy, Residency, Sieve};
+let mut policy = Policy::new(Residency::Memory);
+policy.len = 65_536.0; // documents larger than the 4 KiB nominal
+let sieve = Sieve::with(r"\bTODO\b", &policy);
 ```
 
 Mint the rest with `cargo run --release --example mint`, pointing
@@ -184,14 +202,18 @@ SHENG_CORPUS=/path/to/your/documents cargo run --release --example mint
 
 On PowerShell, set `$env:SHENG_CORPUS` in its own statement first — it doesn't
 parse `VAR=value cmd`. Examples read real source, so the persistence question
-isn't answered by a synthetic generator, and every constant carries its machine,
-kernel, and date.
+isn't answered by a synthetic generator, and every minted constant carries its
+machine, kernel, and date.
 
-`survey` is a gate — every armed row must land above 1.000x — not a report;
+`survey` is a gate — every armed row must land above unity — not a report;
 `bench` is the report, split into four stages so a regression lands on a named
-one. Below 8 MiB, `survey` declines to judge at all, since a cache-resident
-corpus lets the engine's own accelerator run at tens of GB/s with no calibration
-to describe it.
+one. `survey` reads the regime off the corpus rather than taking it as a flag,
+declaring `Residency::Cache` for a small working set and `Residency::Memory`
+above last-level cache, so a small tree and a large one exercise two columns of
+one calibration. It used to refuse small corpora outright, since a per-byte
+price measured against memory cannot describe a corpus that never reads from
+memory; the refusal now survives only for a regime this machine has no minted
+column for, which is a statement about the mint rather than about the corpus.
 
 ## The Design
 
@@ -222,8 +244,8 @@ re-checked; one that isn't actually closed is discarded, not shipped.
 ### The Parallel Kernel
 
 Langdale's kernel holds state in the register, so every shuffle needs the
-previous one's answer — one byte per shuffle latency forever, 2 cycles a byte on
-an M4, and no unrolling shortens that chain.
+previous one's answer — one byte per shuffle latency forever, and no unrolling
+shortens that chain.
 
 Hold the transition function in the register instead, seeded with the identity
 `[0,1,…,15]`. The same single shuffle per byte now composes: after a run of
@@ -232,28 +254,26 @@ answers for the price of one.
 
 That frees the haystack to split into four independent slices running four
 chains at once, four because that's about how many it takes to saturate the
-shuffle port. Geomean over eight patterns on an M4: 0.346 to 0.132 ns/byte, 2.6x
-— and every size gets faster, 1.22x at 64 B up to 2.97x at 64 KiB, since a
-document shorter than one slice re-derives its own stride instead of falling
-back to scalar.
+shuffle port. The parallel form is several times the serial one across the
+survey slate — and every size gets faster, since a document shorter than one
+slice re-derives its own stride instead of falling back to scalar.
 
 Composition gives a per-lane running max, so collapsing the slices reads the
 true maximum over the chunk — the parallel kernel refutes exactly what the
 scalar reference does. Two rejected alternatives: reading all sixteen lanes is
 sound but treats hypothetical scans as real, so nothing refutes; deleting the
-max via a self-loop measured inside the noise (0.131 vs 0.134 ns/byte) for the
-cost of a second trapping form of every quotient.
+max via a self-loop measures inside the noise, for the cost of a second
+trapping form of every quotient.
 
 ### The Start-Block Skip
 
-At 0.131 ns/byte the loop is load-port bound — row and haystack, two loads per
-byte — so the only move left is to stop reading bytes.
+Once the composition loop is load-port bound — row and haystack, two loads per
+byte — the only move left is to stop reading bytes.
 
 A quotient sits in its start block until a byte _escapes_ it; every self-loop
-byte between is provably a no-op. Unanchored patterns live there almost entirely
-— 98.2% of bytes for `WalletService`, 99.2% for `#[0-9a-fA-F]{6}` — so
-`skip::Skip` finds the next escape directly and jumps to it, via two instruments
-chosen by how many byte values leave the block:
+byte between is provably a no-op. Unanchored patterns live there for nearly all
+of a typical document — so `skip::Skip` finds the next escape directly and jumps
+to it, via two instruments chosen by how many byte values leave the block:
 
 - **1-3 values** — `memchr`, already in the graph, the best-tuned SIMD byte
   search around.
@@ -267,38 +287,45 @@ two; a wider or higher set is refused outright (`Skip::of` returns `None`),
 since a false "not a member" would skip a real transition and turn a sound
 refutation into a missed match.
 
-The choice is per lane, since skipping frequently loses: 8.8-11x against a
-one-byte escape set, 0.25x against a three-way alternation. `Lane::plan` prices
-both and takes the cheaper, matching the measured winner 8 of 8 on the survey
-slate, priced by a coefficient minted specifically for it, `skip_excursion`,
-since the engine's own `dfa_excursion` under-predicts this path. Differentiated
-against a scalar reference three ways: every byte value against every set shape,
-2048 pseudo-random ASCII sets, and a planted escape at every offset of every
-length 1-72.
+The choice is per lane, since skipping frequently loses: a one-byte escape set
+can be an order of magnitude win, a three-way alternation a clear loss.
+`Lane::plan` prices both and takes the cheaper, matching the measured winner on
+the survey slate, priced by a coefficient minted specifically for it,
+`skip_excursion`, since the engine's own `dfa_excursion` under-predicts this
+path. Differentiated against a scalar reference three ways: every byte value
+against every set shape, a large battery of pseudo-random ASCII sets, and a
+planted escape at every offset of every short length.
 
 ### The Cost Gate
 
-The filter, built first, made everything slower: geomean 0.230x, a 4.3x
-regression across thirteen patterns, because it armed on every pattern that
-could harvest a quotient.
+The filter, built first, made everything slower — a multi-fold regression across
+the early slate — because it armed on every pattern that could harvest a
+quotient.
 
-Position rejection isn't document rejection. Retiring 99% of byte positions
-sounds decisive; one survivor still drags the whole buffer into verification —
-over 4 KiB at `f = 0.01`, `1 — (1-f)^4096` is 99.99% survival. What matters is
-documents kept, which rises far faster than the per-position rate falls:
-`[0-9]{4}-[0-9]{2}-[0-9]{2}` rejects 99.03% of positions and still keeps 80% of
-documents, because dates cluster.
+Position rejection isn't document rejection. Retiring most byte positions sounds
+decisive; one survivor still drags the whole buffer into verification — over a
+few kilobytes at a modest fallthrough, nearly every document survives. What
+matters is documents kept, which rises far faster than the per-position rate
+falls: a date-shaped pattern can reject almost every position and still keep
+most documents, because dates cluster.
 
 The rival's price decides more often than selectivity does, so the gate is an
 inequality between two measured costs:
 
 ```text
-sieve  +  (1 - (1-f)^len) * rival   <   rival
+(sieve  +  (1 - (1-f)^len) * rival) * (1 + MARGIN)   <   rival
 ```
 
 Every term is absolute ns/byte, and the rival's term is read from
 `Dfa::accelerator` on the engine's own start state — the crate asks what
 it intends to skip, and prices that.
+
+`MARGIN` sits well above unity so a modeled edge inside the mint's run-to-run
+spread declines. Every term is a measurement, and a verdict inside that spread
+is a coincidence rather than a finding: patterns that first scored a hair over
+parity have measured both as losses and as wins depending on residency — a coin
+flip, which is what a near-parity prediction drawn from noisy inputs should
+look like.
 
 ### The Persistence-Aware Prior
 
@@ -307,80 +334,70 @@ document has already paid for the scan. The estimate comes only from the
 quotient's own Markov chain.
 
 An independent-draw chain prices a `k`-byte class run as `p^k`, but real text
-isn't memoryless. Measured over 64 MiB of this repository (marginal probability,
-repeat probability, ratio):
+isn't memoryless. Digits and non-ASCII bytes in particular are far more likely
+to follow themselves than their marginal share suggests — so the naive model
+under-prices a long digit run by many orders of magnitude, a filter believing
+it rejects everything while rejecting nothing.
 
-- **`Lower`** — 0.5703, 0.7683, 1.3x.
-- **`Digit`** — 0.0186, 0.3863, 20.8x.
-- **`High`** — 0.0139, 0.9167, 66.0x.
+The fix carries the byte's class in the chain's state: (block, class) pairs over
+a small class alphabet, collapsing exactly to the naive chain under a
+memoryless prior. `Prior::Text` stays as that superseded case on purpose, so its
+error stays measurable.
 
-A digit is 21x likelier to follow a digit than at random, so the naive model
-under-prices a forty-digit run by `20.8^40` — a filter believing it rejects
-everything while rejecting nothing.
-
-The fix carries the byte's class in the chain's state: (block, class) pairs, 112
-states, a 7x7 matrix, collapsing exactly to the naive chain under a memoryless
-prior. `Prior::Text` stays as that superseded case on purpose, so its error
-stays measurable.
-
-That chain was also the entire build cost: 512 power iterations over 112 states,
-99.9% of a 44-to-75 ms build. It factors — the byte draw depends only on the
-previous class — so aggregating bytes into class edges once at construction
-visits only the transitions that exist, no approximation added. Measured on an
-M4: `WalletService` build time falls 64.1 to 0.55 ms, `#[0-9a-fA-F]{6}` 72.6 to
-0.34 ms — 116x to 278x across the five-pattern slate. One thing didn't survive:
-exiting early once the distribution looked settled, since the accepting mass can
-be `1e-29` and still climbing after the bulk has stopped moving — the iteration
-count is now fixed.
+That chain was also the entire build cost: hundreds of power iterations over
+the joint state, almost all of a multi-tens-of-milliseconds build. It factors —
+the byte draw depends only on the previous class — so aggregating bytes into
+class edges once at construction visits only the transitions that exist, no
+approximation added. Build time then falls by two orders of magnitude across
+the survey slate. One thing didn't survive: exiting early once the distribution
+looked settled, since the accepting mass can still be climbing after the bulk
+has stopped moving — the iteration count is now fixed.
 
 ### The Excursion Coefficient
 
 `dfa_excursion` is the one term we couldn't derive: an accelerated engine pays
 for a whole DFA excursion when `memchr` trips, not one byte, and the restart
-dominates. Omitting it under-priced a common-byte accelerator by 8x.
+dominates. Omitting it under-priced a common-byte accelerator by nearly an
+order of magnitude.
 
-We timed eleven accelerated patterns spanning two orders of magnitude of
+We timed a slate of accelerated patterns spanning two orders of magnitude of
 lead-byte frequency and inverted the blend for `E`. Read at class resolution,
-they spanned 3.6 to 35.2, a tenfold disagreement; read from a per-byte table,
-they collapsed to roughly 7.5-13, mean ~10.3, stable across re-mints — evidence
-the coefficient is real. The slate now classifies perfectly: six armed, seven
-declined, every declined row independently measured below 1.0x when forced to
-arm.
+the inverted values disagreed by about tenfold; read from a per-byte table,
+they collapse into a narrow band stable across re-mints — evidence the
+coefficient is real. The survey slate now classifies cleanly: every declined
+row independently measures below unity when forced to arm.
 
-The armed-row geomean can mislead: 2.21x with the skip kernel on, 2.83x with it
-off (`SHENG_NO_SKIP=1`). The skip is still the improvement — it arms two
-patterns that couldn't pay for themselves before, both marginal (`WalletService`
-1.16x, `foo[^\n]*bar` 1.09x), pulling the average down. Held to the four that
-armed either way, the slate goes 2.83x to 3.11x, nearly all of it
-`[0-9]{3}-[0-9]{4}` moving 3.21x to 4.42x.
+The armed-row geomean can mislead: turning the skip kernel off
+(`SHENG_NO_SKIP=1`) can raise the average, because the skip arms marginal
+patterns that pull it down. Held to the patterns that arm either way, the skip
+still wins — nearly all of the gain on the distinctive-alphabet cases.
 
 ### Machine Dependence
 
 Three layers could tie to the measuring machine; only one really does. The
-mathematics and kernel are pure arithmetic, differentiated across 30,000 mutated
-haystacks against the scalar reference, run as a standing proof on all six
-native targets in [`.github/workflows/native.yml`](.github/workflows/native.yml)
-on every push.
+mathematics and kernel are pure arithmetic, differentiated across a large
+battery of mutated haystacks against the scalar reference, run as a standing
+proof on all six native targets in
+[`.github/workflows/native.yml`](.github/workflows/native.yml) on every push.
 
 The clock is provably irrelevant: multiply every `Calibration` coefficient by
 any positive constant and no decision moves, since the factor cancels on both
-sides of the arming inequality. A loaded laptop, a throttled core, a 3-versus-5
-GHz gap all decide identically.
+sides of the arming inequality. A loaded laptop, a throttled core, a wide clock
+gap all decide identically.
 
-What survives scaling is three dimensionless ratios, minted from this crate's
-own source tree:
+What survives scaling is three dimensionless ratios, minted from real source:
 
-- **`skip/walk`** — 0.013 arm64, 0.010 x86_64.
-- **`sieve/walk`** — 0.149 arm64, 0.175 x86_64.
-- **Excursion** — 9.7 arm64, 11.6 x86_64.
+- **`skip/walk`** — how cheap `memchr` is against a dense walk.
+- **`sieve/walk`** — how cheap the composition kernel is against that walk.
+- **Excursion** — how many walk-bytes an accelerator restart costs.
 
 They differ less than instinct suggests once both sides run the same kernel —
-walk cost is nearly identical, 1.26 against 1.25 ns/B. Re-minted together on
-2026-08-03 after `shuffle` moved to four parallel slices, `panic!\(` now arms on
-both: 1.329x arm64, 1.319x x86_64.
+walk cost is nearly identical across the shipped rows. After `shuffle` moved to
+four parallel slices, patterns that sit near the margin arm on both
+architectures together.
 
 `price::MINTED` holds one row per (architecture, kernel) pair measured so far,
-keyed deliberately without `os` — Windows shares both rows above, since nothing
+keyed deliberately without `os` — Windows shares the arch rows, since nothing
 upstream varies by it. Anything unmeasured declines, naming the missing
 measurement.
 
@@ -390,14 +407,15 @@ of our Rust. They disagree at the coarsest level — indentation makes a space t
 likeliest thing to follow a space in a code tree, and in prose it is the least
 likely — so the default sweeps all four and takes the worst, and a caller who
 knows they are searching logs narrows to `Prior::Log` for a better-informed and
-looser decision:
+looser decision. Each names its corpus, then the one shape that makes it differ:
 
-| prior | corpus | the shape that makes it different |
-| ------------- | -------------------------------------- | -------------------------------------------- |
-| `Prior::Source` | this tree, 64.1 MiB, 9 languages | `Digit` repeats 20.8x its marginal share |
-| `Prior::Prose` | 18 Gutenberg books, 11.2 MiB | `Space` is *anti*-persistent, 0.2x |
-| `Prior::Json` | `simdjson-data`, 26.9 MiB | nothing is rare; 4 of 7 classes above 0.67 |
-| `Prior::Log` | `loghub`, 16 systems, 4.3 MiB | `Punct` alternates rather than clusters, 0.5x |
+- **`Prior::Source`** — a polyglot code tree; `Digit` repeats far above its
+  marginal share.
+- **`Prior::Prose`** — literary English; `Space` is _anti_-persistent.
+- **`Prior::Json`** — `simdjson-data`; nothing is rare, most classes persist
+  heavily.
+- **`Prior::Log`** — `loghub` across many systems; `Punct` alternates rather
+  than clusters.
 
 Adding a corpus can only tighten the gate, which is what makes the set safe to
 grow and safe to ship a thinly-sampled row in. A byte process none of them
@@ -419,8 +437,9 @@ prior art at least three times over:
   parametrized language overapproximation_, INFOCOM 2014
   ([10.1109/INFOCOM.2014.6847977](https://doi.org/10.1109/INFOCOM.2014.6847977))
   — Definition 7 is exactly `|D'| < |D|` with `L(D) ⊆ L(D')`, calling shrunk
-  DFAs "a special case of quotient automaton." Measured 4.7x, and +26% when
-  nothing rejects — the hazard our cost gate exists to avoid.
+  DFAs "a special case of quotient automaton." They measured a multi-fold win,
+  and a clear slowdown when nothing rejects — the hazard our cost gate exists
+  to avoid.
 - **Češka, Havlena, Holík, Lengál & Vojnar**, _Approximate reduction of finite
   automata for high-speed network intrusion detection_
   ([arXiv:1904.10786](https://arxiv.org/abs/1904.10786), 2019) — a cascade of
@@ -446,10 +465,10 @@ Three claims stay narrow: the SP-lattice harvest as the approximation's source,
 the ≤16-state register-resident conjunction, and the training-free gate. Two
 pieces of the gate aren't ports either, named as open residuals by the Zig
 rung's own bench: the persistence-aware prior (the Zig gate's memoryless prior
-under-prices a 40-byte run by seventeen orders of magnitude, arming one pattern
-into a measured 0.89x loss), and the accel-aware rival term (the Zig inequality
-prices the fronted machine at full-scan cost; this one prices the skip the
-engine itself intends to take).
+under-prices a long class run by many orders of magnitude, arming patterns into
+measured losses), and the accel-aware rival term (the Zig inequality prices the
+fronted machine at full-scan cost; this one prices the skip the engine itself
+intends to take).
 
 ## Problem Reports
 
