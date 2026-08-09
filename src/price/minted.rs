@@ -309,22 +309,34 @@ mod tests {
     /// stops being dispatched to reads identically to one nobody has written yet, costs
     /// throughput rather than correctness, and breaks no other test in this crate. The
     /// only thing that can catch it is a list somebody has to edit.
+    ///
+    /// Scoped to machines that have *any* row, which the operating-system column made a
+    /// distinction worth drawing. A machine nobody has minted at all is not a missing
+    /// row — it is an unminted machine, it declines every pattern by design, and
+    /// [`DORMANT`] is the wrong place to say so, since the kernel may be well priced on
+    /// the next box over. Refusing to call that state a pass is `examples/survey.rs`'s
+    /// job, and `.github/workflows/native.yml` runs it on all six legs. What is left here
+    /// is the narrow, quiet failure this list exists for: a machine that *does* have rows
+    /// and is missing one for a kernel its own silicon can run.
     #[test]
     fn an_unpriced_kernel_is_declared_rather_than_merely_absent() {
-        let priced = |kernel| {
-            MINTED.iter().any(|cal| {
-                cal.os == crate::price::OS && cal.arch == crate::price::ARCH && cal.kernel == kernel
-            })
+        let mine = || {
+            MINTED
+                .iter()
+                .filter(|cal| cal.os == crate::price::OS && cal.arch == crate::price::ARCH)
         };
+        let priced = |kernel| mine().any(|cal| cal.kernel == kernel);
         let declared = |kernel| DORMANT.iter().any(|&(dormant, _)| dormant == kernel);
-        for &kernel in crate::shuffle::available() {
-            assert!(
-                !kernel.is_vector() || priced(kernel) || declared(kernel),
-                "{} {} can run {kernel:?} and nothing prices it — mint a row, or add it \
-                 to DORMANT with the reason it is waiting",
-                crate::price::OS,
-                crate::price::ARCH
-            );
+        if mine().next().is_some() {
+            for &kernel in crate::shuffle::available() {
+                assert!(
+                    !kernel.is_vector() || priced(kernel) || declared(kernel),
+                    "{} {} has rows but none for {kernel:?}, which its silicon can run — \
+                     mint one, or add it to DORMANT with the reason it is waiting",
+                    crate::price::OS,
+                    crate::price::ARCH
+                );
+            }
         }
         for &(kernel, why) in DORMANT {
             assert!(
