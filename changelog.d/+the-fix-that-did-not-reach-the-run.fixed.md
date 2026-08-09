@@ -16,3 +16,12 @@ was skipped, and the open PR kept sitting red on the stale `Cargo.lock` this job
 the failure mode the gate's own comment says it prevents, since a fold has to be able to re-run
 while the PR stays open. When the output is empty the job now asks for the open PR release-please
 labels `autorelease: pending` and folds onto that.
+
+Running on every push is what exposed the fold as incremental. towncrier refuses to write a second
+section for a version it has already written, so the second run over an already-folded branch was
+a hard error rather than a no-op — and fragments that reached main after the first fold could not
+have been folded at that version even if it had been. The job now restores `CHANGELOG.md` and
+`changelog.d/` from main before folding, which makes the result a function of main at that version:
+idempotent when nothing moved, complete when something did. Its "nothing to fold" check compares
+against `HEAD` rather than the index, since restoring those two paths stages them and the previous
+comparison would have called a real change quiet.

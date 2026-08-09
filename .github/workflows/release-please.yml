@@ -12,9 +12,10 @@
 #    under changelog.d/ are the notes people actually read, so the config sets
 #    `skip-changelog`. The `fold changelog` job below folds them into
 #    CHANGELOG.md at the exact version this PR bumps to and pushes that onto
-#    the PR branch; it re-runs on every push to main while the PR stays open,
-#    so the fold never falls behind whatever fragments are on the branch when
-#    someone finally merges. `release.yml`'s preflight re-checks the fold
+#    the PR branch; it re-runs on every push to main while the PR stays open and
+#    recomputes the whole fold from main each time, so the fold never falls behind
+#    whatever fragments main is carrying when someone finally merges.
+#    `release.yml`'s preflight re-checks the fold
 #    landed before it will publish anything. That job also re-locks `Cargo.lock`,
 #    which mirrors this crate's version but cannot carry a marker for the generic
 #    updater to find — a lock left a version behind fails every `--locked` job on
@@ -167,6 +168,17 @@ jobs:
           set -euo pipefail
           version=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])' \
             <<<'${{ steps.version.outputs.result }}')
+          # Recompute the fold from main rather than appending to whatever this branch
+          # already carries. towncrier refuses outright to write a second section for a
+          # version it has already written, so an incremental fold is not merely wasteful
+          # — a second run over an already-folded branch is a hard error, and fragments
+          # that reached main after the first fold could never be folded at all. Taking
+          # both paths from main makes the fold a function of main at this version:
+          # idempotent when nothing moved, and complete when something did. release-please
+          # sets `skip-changelog`, so nothing of its own is discarded here.
+          git fetch --depth=1 \
+            "https://x-access-token:${RELEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
+          git checkout FETCH_HEAD -- CHANGELOG.md changelog.d
           uv run --no-project --python 3.12 --with towncrier==25.8.0 \
             towncrier build --yes --version "$version"
           # `Cargo.lock` carries this crate's own version too, and release-please's
@@ -178,7 +190,10 @@ jobs:
           # release commit. rustup resolves 1.96.0 from `rust-toolchain.toml` here the
           # same way every other job gets it.
           cargo update --workspace
-          if git diff --quiet -- CHANGELOG.md changelog.d Cargo.lock; then
+          # Against HEAD, not the index: restoring the two paths from main above stages
+          # them, and a bare `git diff` would compare the tree to that staging and call a
+          # real change quiet.
+          if git diff --quiet HEAD -- CHANGELOG.md changelog.d Cargo.lock; then
             echo "nothing new to fold at $version"
             exit 0
           fi
