@@ -27,18 +27,28 @@ use crate::shuffle::Kernel;
 /// slate reaches it. [`Calibration::sieve_per_byte`] extrapolates it conservatively
 /// rather than treating the hole as free.
 ///
-/// Every figure still carries double-digit-percent run-to-run variance on a loaded
-/// machine. Because the gate is scale-invariant, that variance costs no decisions:
-/// a run under load inflates the absolute figures together.
+/// The absolute per-byte figures — `dfa_skip`, `dfa_walk`, `sieve` — carry up to
+/// double-digit-percent run-to-run variance on a loaded machine, because `mint`
+/// times them unpaired. Because the gate is scale-invariant, that variance costs
+/// no decisions: a run under load inflates them together.
 ///
 /// A re-mint is a fresh complete measurement, not a splice of old and new
 /// afternoons: the gate reads *ratios* between these numbers, and a ratio built
-/// from two different sessions is not a measurement of anything. The exception is
-/// `skip_excursion`, which is dimensionless and already self-normalized inside a
-/// single interleaved timing window — `mint`'s `paired` re-times both baselines
-/// against the pattern they divide, round by round — so it may be carried forward
-/// when the rest of the row is re-taken. The higher of consecutive paired mints is
-/// the one recorded, because an overstated excursion can only decline a skip.
+/// from two different sessions is not a measurement of anything. The exceptions are
+/// the two excursion coefficients, which are dimensionless and already
+/// self-normalized inside a single interleaved timing window — `mint`'s `paired`
+/// re-times both baselines against the pattern they divide, round by round — so
+/// they may be carried forward when the rest of the row is re-taken. The higher of
+/// consecutive paired mints is the one recorded, because an overstated excursion
+/// can only decline a skip.
+///
+/// Which figures move is itself evidence, and worth trusting over any single run.
+/// Two independent mints six days and one `regex-automata` removal apart re-derived
+/// this row's memory-resident `dfa_excursion` to within a fraction of a percent,
+/// while the unpaired figures beside it moved by several — the split falls exactly
+/// where `paired` is and is not used. So an excursion coefficient that looks like
+/// it drifted has almost certainly been read across regimes rather than across
+/// afternoons; see below.
 ///
 /// Two coefficients carry a [`Residency`](super::Residency) index because a
 /// `memchr` and a dense-DFA re-entry are both cheaper once the bytes are already
@@ -137,13 +147,14 @@ pub const UNMEASURED: Calibration = Calibration {
 /// is *absent* from this slice is as load-bearing as what is present. Two consequences
 /// worth stating out loud:
 ///
-/// * A new instruction set lands without a flag day. `Kernel::Avx2` is implemented,
-///   differentially tested against the scalar reference on real AVX2 silicon by
-///   `tests/kernels.rs`, and **not dispatched to**, because no row below was measured
-///   on it. Adding one arms it; until then it moves no decision, and — the failure this
-///   ordering exists to prevent — it cannot win a dispatch on a machine whose only
-///   calibration describes `pshufb` and thereby strand a modern x86_64 install on
-///   [`UNMEASURED`].
+/// * A new instruction set lands without a flag day. A kernel is implemented,
+///   differentially tested against the scalar reference on real silicon by
+///   `tests/kernels.rs`, and **not dispatched to** until a row below was measured on it.
+///   Adding one arms it; until then it moves no decision, and — the failure this ordering
+///   exists to prevent — it cannot win a dispatch on a machine whose only calibration
+///   describes a narrower shuffle and thereby strand that install on [`UNMEASURED`].
+///   Which kernels are in that state is not left to be inferred from this slice's
+///   absences: [`DORMANT`] names them, and a test holds the two lists to each other.
 /// * A row is therefore per *kernel*, not per machine, which is why these names carry
 ///   both halves of the key. One `cargo run --release --example mint` prints a row for
 ///   every kernel the running silicon has, so a machine's rows can be pasted in
@@ -151,6 +162,45 @@ pub const UNMEASURED: Calibration = Calibration {
 ///   `.github/workflows/mint.yml` is that run, on real hardware for every
 ///   (architecture, kernel) pair this crate dispatches to.
 pub const MINTED: &[Calibration] = &[MACOS_AARCH64_NEON, LINUX_X86_64_SSSE3];
+
+/// Kernels this crate implements and some silicon can execute, that [`MINTED`] prices on
+/// no architecture — so [`crate::shuffle::kernel`] will not elect them anywhere.
+///
+/// Empty is the goal, not the invariant. A kernel is written and differentially tested
+/// long before anybody has an hour of the right silicon to price it on, and the
+/// permission check in [`crate::arch::kernel`] exists precisely so that shipping it in
+/// that state is safe rather than reckless. What this list adds is that the state has to
+/// be **declared**, with the reason, by whoever leaves it that way.
+///
+/// The failure it catches is a quiet one, and it is the reason this is a list rather than
+/// a paragraph. A kernel nobody has minted yet and a kernel that *stopped* being priced —
+/// because a row was deleted, or because a wider rung was added above a priced one and
+/// the mint was never re-run — are indistinguishable in [`MINTED`]: both are simply
+/// absent. One is a plan and the other is a regression that costs every machine on that
+/// silicon its throughput while every test still passes, since the narrower kernel is
+/// still correct. Naming the first is what makes the second visible.
+///
+/// The test below holds this honest in both directions: a vector kernel this silicon can
+/// run must be either priced or named here, and a kernel named here must not turn out to
+/// be priced after all. So a mint that lands a row also has to delete its line.
+pub const DORMANT: &[(Kernel, &str)] = &[
+    (
+        Kernel::Avx512,
+        "differentiated under Intel SDE by `ci.yml`, which proves the kernel and prices \
+         nothing; `vpshufb` on `zmm` may cost frequency it cannot pay back, and only real \
+         silicon can say",
+    ),
+    (
+        Kernel::Avx2,
+        "awaiting the x86_64 leg of `.github/workflows/mint.yml`, which is the first mint \
+         this crate can run on real AVX2 silicon",
+    ),
+    (
+        Kernel::Simd128,
+        "a `wasm32` row's nanoseconds belong to the runtime and host under it, so the \
+         `mint` leg that prices one has to name both",
+    ),
+];
 
 #[cfg(test)]
 mod tests {
@@ -213,6 +263,41 @@ mod tests {
                 Some(chosen),
                 best,
                 "dispatch settled for {chosen:?} while {best:?} is both faster and priced"
+            );
+        }
+    }
+
+    /// Every vector kernel this silicon can execute is either priced or **declared**
+    /// dormant, and nothing declared dormant is secretly priced.
+    ///
+    /// The test above proves dispatch never elects an unpriced kernel, which is the
+    /// safety property. This one is about the opposite hazard, which is not a safety
+    /// property at all and is therefore the easier one to ship: a kernel that silently
+    /// stops being dispatched to reads identically to one nobody has written yet, costs
+    /// throughput rather than correctness, and breaks no other test in this crate. The
+    /// only thing that can catch it is a list somebody has to edit.
+    #[test]
+    fn an_unpriced_kernel_is_declared_rather_than_merely_absent() {
+        let priced = |kernel| {
+            MINTED
+                .iter()
+                .any(|cal| cal.arch == crate::price::ARCH && cal.kernel == kernel)
+        };
+        let declared = |kernel| DORMANT.iter().any(|&(dormant, _)| dormant == kernel);
+        for &kernel in crate::shuffle::available() {
+            assert!(
+                !kernel.is_vector() || priced(kernel) || declared(kernel),
+                "{} can run {kernel:?} and nothing prices it — mint a row, or add it to \
+                 DORMANT with the reason it is waiting",
+                crate::price::ARCH
+            );
+        }
+        for &(kernel, why) in DORMANT {
+            assert!(
+                !priced(kernel),
+                "{kernel:?} is priced on {} but still listed DORMANT as {why:?} — a row \
+                 landing is what deletes that line",
+                crate::price::ARCH
             );
         }
     }

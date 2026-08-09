@@ -44,7 +44,11 @@ the newest instruction set is exactly the one `soundness` cannot reach until
 somebody mints it. `shuffle::force` closes that gap and refuses any kernel the
 runtime probe did not admit, so nothing here can execute an instruction the host
 lacks. On arm64 this sweeps one kernel, since NEON is baseline; on x86_64 it
-sweeps `Avx2`, `Ssse3` and `Scalar`.
+sweeps `Ssse3`, `Scalar`, and whichever of `Avx512` and `Avx2` the host probes as
+present — so what this target covers is a property of the machine it ran on rather
+than of the target. `tests/kernels.rs` prints the ladder it was handed for that
+reason; a fuzz run has no such line, so read it as covering the narrow rungs
+everywhere and the wide ones only where the fleet supplied them.
 
 This is a standalone `cargo-fuzz` crate (nightly-only — libFuzzer needs
 sanitizer support the stable toolchain does not ship) excluded from the parent

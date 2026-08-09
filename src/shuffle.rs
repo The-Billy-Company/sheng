@@ -70,13 +70,15 @@
 
 #[cfg(any(
     target_arch = "aarch64",
-    all(target_arch = "x86_64", target_feature = "sse2")
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    all(target_arch = "wasm32", target_feature = "simd128")
 ))]
 use crate::arch;
 // `LANES` sizes `IDENTITY`, which only a vector chain seeds itself from.
 #[cfg(any(
     target_arch = "aarch64",
-    all(target_arch = "x86_64", target_feature = "sse2")
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    all(target_arch = "wasm32", target_feature = "simd128")
 ))]
 use crate::lattice::LANES;
 use crate::lattice::Quotient;
@@ -121,7 +123,8 @@ pub(crate) const CHUNK: usize = 256;
 /// condition and for every other site that shares it.
 #[cfg(any(
     target_arch = "aarch64",
-    all(target_arch = "x86_64", target_feature = "sse2")
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    all(target_arch = "wasm32", target_feature = "simd128")
 ))]
 pub(crate) const WAYS: usize = 4;
 
@@ -134,7 +137,8 @@ pub(crate) const WAYS: usize = 4;
 /// they were supposed to be using.
 #[cfg(any(
     target_arch = "aarch64",
-    all(target_arch = "x86_64", target_feature = "sse2")
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    all(target_arch = "wasm32", target_feature = "simd128")
 ))]
 pub(crate) const STRIDE: usize = CHUNK / WAYS;
 
@@ -142,7 +146,8 @@ pub(crate) const STRIDE: usize = CHUNK / WAYS;
 /// shuffling it by a row yields that row. Every chain starts here.
 #[cfg(any(
     target_arch = "aarch64",
-    all(target_arch = "x86_64", target_feature = "sse2")
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    all(target_arch = "wasm32", target_feature = "simd128")
 ))]
 pub(crate) const IDENTITY: [u8; LANES] = {
     let mut v = [0u8; LANES];
@@ -163,9 +168,10 @@ pub(crate) const IDENTITY: [u8; LANES] = {
 #[must_use]
 pub fn refutes(q: &Quotient, hay: &[u8]) -> bool {
     // Dispatch reads [`kernel`] rather than re-deriving the cfg ladder, so what runs
-    // and what the crate reports are the same decision. NEON needs no runtime probe
-    // (it is baseline on aarch64); SSSE3's probe caches in a static after the first
-    // call, and either way this is once per document, not once per byte.
+    // and what the crate reports are the same decision. NEON and SIMD128 need no runtime
+    // probe at all (baseline on aarch64, and a compile-time property of the module on
+    // wasm32); the x86_64 probes cache in a static after the first call, and either way
+    // this is once per document, not once per byte.
     match kernel() {
         #[cfg(target_arch = "aarch64")]
         // SAFETY: this arm is only reachable under `#[cfg(target_arch = "aarch64")]`,
@@ -173,11 +179,22 @@ pub fn refutes(q: &Quotient, hay: &[u8]) -> bool {
         // precondition.
         Kernel::Neon => unsafe { arch::neon::sweep_shuffle(q, hay) },
         #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+        // SAFETY: `kernel()` names `Avx512` only where the probe confirmed both leaf-7
+        // bits, `OSXSAVE` and all five `XCR0` bits — exactly
+        // `arch::avx512::sweep_shuffle`'s own precondition. `arch::force` can only name
+        // a kernel that same probe admitted, so the seam does not widen this.
+        Kernel::Avx512 => unsafe { arch::avx512::sweep_shuffle(q, hay) },
+        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
         // SAFETY: `kernel()` names `Avx2` only where the probe confirmed the silicon
         // bit, `OSXSAVE` and `XCR0`'s upper-half promise — exactly
         // `arch::avx2::sweep_shuffle`'s own precondition. `arch::force` can only name
         // a kernel that same probe admitted, so the seam does not widen this.
         Kernel::Avx2 => unsafe { arch::avx2::sweep_shuffle(q, hay) },
+        #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+        // SAFETY: this arm is only reachable under `target_feature = "simd128"`, which
+        // is the whole of `arch::simd128::sweep_shuffle`'s precondition — a guest has no
+        // runtime question to ask here.
+        Kernel::Simd128 => unsafe { arch::simd128::sweep_shuffle(q, hay) },
         #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
         // SAFETY: `kernel()` returns `Ssse3` only after its `CPUID` probe confirmed
         // the CPU has it — exactly `arch::ssse3::sweep_shuffle`'s own precondition.
@@ -265,7 +282,8 @@ pub(crate) fn walk(q: &Quotient, hay: &[u8], mut state: u8) -> Option<u8> {
     test,
     any(
         target_arch = "aarch64",
-        all(target_arch = "x86_64", target_feature = "sse2")
+        all(target_arch = "x86_64", target_feature = "sse2"),
+        all(target_arch = "wasm32", target_feature = "simd128")
     )
 ))]
 mod tests {

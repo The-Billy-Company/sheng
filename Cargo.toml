@@ -85,8 +85,8 @@ default = [ "std", "regex-automata" ]
 # Runtime facilities, none of which the sieve's arithmetic needs: `memchr`'s AVX2
 # dispatch (which is worth real throughput on x86_64 — without `std` it is limited to
 # SSE2, because runtime feature detection is what `std` is for) and `regex-automata`'s
-# own std leg. Note what is NOT here: the SSSE3 probe for this crate's own kernels is
-# hand-rolled off `CPUID` in `src/arch/mod.rs`, and `core::error::Error` covers the
+# own std leg. Note what is NOT here: the feature probes for this crate's own kernels are
+# hand-rolled off `CPUID` and `XCR0` in `src/arch/mod.rs`, and `core::error::Error` covers the
 # error traits, so `no_std` costs no capability of sheng's own.
 std = [ "memchr/std", "regex-automata?/std" ]
 
@@ -164,8 +164,8 @@ missing_docs = "deny"
 pedantic = { level = "allow", priority = -1 }
 # The rule that every `unsafe` block carries a `// SAFETY:` comment, enforced by
 # the compiler instead of by review. This crate's entire risk surface is the
-# hand-written NEON and SSSE3 in `shuffle.rs` and `skip.rs`, so it is the one
-# lint worth denying.
+# hand-written intrinsics under `src/arch/` that `shuffle.rs` and `skip.rs` dispatch
+# into, so it is the one lint worth denying.
 undocumented_unsafe_blocks = "deny"
 
 [profile.release]

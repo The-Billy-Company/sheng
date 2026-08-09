@@ -87,13 +87,24 @@ fn walk(files: usize, bytes: usize) -> Vec<(std::path::PathBuf, Vec<u8>)> {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
+        // Sorted, and that is not tidiness. `read_dir` yields in whatever order the
+        // filesystem feels like, and both budgets above stop the walk *mid-directory* —
+        // so an unsorted walk hands two runs over the same pinned corpus two different
+        // subsets of it. That is exactly the property a price row is compared across CI
+        // legs on ("every leg read the same bytes"), and without this line it was a hope
+        // rather than a fact whenever the corpus was larger than the budget. The sort is
+        // free at this scale; the alternative is a coefficient whose provenance is a
+        // directory listing.
+        let mut listing: Vec<std::path::PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        listing.sort();
+        for path in listing {
             // Dotfiles, build output and vendored trees are not the corpus anyone
             // greps, and `target/` alone would swamp the sample with our own artifacts.
-            if name.starts_with('.') || matches!(&*name, "target" | "node_modules" | "vendor") {
+            let ignored = path.file_name().is_none_or(|name| {
+                let name = name.to_string_lossy();
+                name.starts_with('.') || matches!(&*name, "target" | "node_modules" | "vendor")
+            });
+            if ignored {
                 continue;
             }
             if path.is_dir() {

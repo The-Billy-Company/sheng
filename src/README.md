@@ -15,7 +15,7 @@ The pipeline runs in one direction, each stage narrowing what the next can consi
 | `projection.rs`  | a `dense::DFA` becomes reachable core states + the exact byte partition       |
 | `lattice.rs`     | the SP-partition closure over that core, and which quotients to conjoin       |
 | `shuffle.rs`     | the register kernel that runs a quotient: dispatch, composition, scalar reference |
-| `arch/`          | the unsafe NEON, AVX2 and SSSE3 intrinsics `shuffle.rs` and `skip.rs` dispatch into |
+| `arch/`          | the unsafe NEON, AVX-512, AVX2, SSSE3 and SIMD128 intrinsics `shuffle.rs` and `skip.rs` dispatch into |
 | `skip.rs`        | finding the next byte that leaves the start block, exactly rather than nearly |
 | `prior/`         | what a byte is likely to be, given the byte before it                         |
 | `selectivity.rs` | the joint (block, class) chain that predicts how often a quotient accepts     |
@@ -67,5 +67,5 @@ than three: `mod.rs` is the model — seven classes, a 7x7 chain, why a memoryle
 misprices a run — and `minted.rs` is nothing but the four corpora it measured. `arch/` is
 the same split applied to the two SIMD
 kernels: `shuffle.rs` and `skip.rs` hold the portable dispatch and scalar fallbacks, while
-every `unsafe` NEON/SSSE3 intrinsic lives behind `arch::neon`/`arch::ssse3`, each gated
-to compile only on its own target architecture.
+every `unsafe` intrinsic lives behind an `arch::` module named for its instruction set,
+each gated to compile only on its own target architecture.

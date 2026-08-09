@@ -1,7 +1,9 @@
 name: Native
 
 # One matrix, called from both `ci.yml` (cached, every push and PR) and
-# `release.yml` (uncached, gating publish). Kept as its own reusable workflow
+# `release.yml` (uncached, gating publish) — a `workflow_call` from each rather than a
+# `push` trigger of its own, so the six legs run once per commit instead of twice.
+# Kept as its own reusable workflow
 # rather than duplicated so the six-target list is a fact stated once — the
 # lesson `Cargo.toml`'s own header already states about this crate's build
 # shape, applied to CI.
@@ -39,6 +41,12 @@ jobs:
   # dispatch actually chose a vector kernel (never comparing the scalar path to
   # itself) runs on all six rather than trusting that Windows follows the same
   # `cfg` the other two OSes already exercise.
+  #
+  # Which is also why no leg is named for a kernel. The x86_64 ladder holds four
+  # rungs and the runtime probe decides how many of them a given runner reaches, so
+  # the kernel is a fact about the machine GitHub allocated rather than about the
+  # matrix cell — `tests/kernels.rs` prints the ladder it was handed and sweeps
+  # exactly that.
   proof:
     name: ${{ matrix.label }}
     strategy:
@@ -46,17 +54,17 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
-            label: linux-x86_64 (ssse3)
+            label: linux-x86_64
           - os: ubuntu-24.04-arm
-            label: linux-aarch64 (neon)
+            label: linux-aarch64
           - os: macos-15-intel
-            label: macos-x86_64 (ssse3)
+            label: macos-x86_64
           - os: macos-15
-            label: macos-aarch64 (neon)
+            label: macos-aarch64
           - os: windows-2025
-            label: windows-x86_64 (ssse3)
+            label: windows-x86_64
           - os: windows-11-arm
-            label: windows-aarch64 (neon)
+            label: windows-aarch64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -114,6 +122,12 @@ jobs:
       # asserts dispatch chose a real vector kernel on this (OS, arch) pair
       # rather than silently falling back to `Scalar`.
       - run: cargo test --workspace --release --all-features --locked
+
+      # The ladder this leg was handed, printed. Six legs across two architectures is
+      # the widest view of `arch::available` this repository ever gets, and it is the
+      # only place a runner with AVX-512 would announce itself — which is the fact
+      # `price::DORMANT`'s first entry is waiting on.
+      - run: cargo test --release --all-features --locked --test kernels -- --nocapture
 
       # `SHENG_SURVEY_REQUIRE_CORPUS` turns `examples/survey.rs`'s "no verdict,
       # corpus too small" print into a hard failure. A human re-minting locally

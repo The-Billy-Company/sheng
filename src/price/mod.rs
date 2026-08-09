@@ -67,7 +67,7 @@ mod minted;
 
 pub use calibration::{Calibration, REGIMES, Residency, active};
 pub use gate::{CostFact, MARGIN, NOMINAL_LEN, VALIDITY_FLOOR, survival};
-pub use minted::{LINUX_X86_64_SSSE3, MACOS_AARCH64_NEON, MINTED, UNMEASURED};
+pub use minted::{DORMANT, LINUX_X86_64_SSSE3, MACOS_AARCH64_NEON, MINTED, UNMEASURED};
 
 /// The architecture string [`MINTED`] keys its rows on, and the one a fresh row
 /// must name. See [`crate::arch::ARCH`].

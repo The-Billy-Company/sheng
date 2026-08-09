@@ -44,11 +44,36 @@ are minted from corpora pinned by commit in `.github/workflows/priors.yml`, whic
 re-derives them on every relevant push and fails if a cell has drifted — a prior is a
 count, so unlike a price row it can be checked rather than merely stamped.
 
-Every block is stamped with the architecture, the kernel dispatch chose, the host and the
-date — from `std` alone, no `uname` shell-out. A measured value with no machine beside it
-is an anecdote, and a price row measured through `pshufb` is not a price for a machine
-without it. The price row prints named for its target (`LINUX_X86_64_SSSE3`), because it belongs
-in `price::MINTED` rather than replacing a global default.
+Every block is stamped with the architecture, the kernel it was measured on, the
+host and the date — from `std` alone, no `uname` shell-out. A measured value with
+no machine beside it is an anecdote, and a price row measured through `pshufb` is
+not a price for a machine without it. Each row prints named for its
+(architecture, kernel) pair (`LINUX_X86_64_SSSE3`), because it belongs in
+`price::MINTED` rather than replacing a global default.
+
+One run prints a row per kernel the silicon can execute rather than one for the
+kernel dispatch chose, and that is what makes a new instruction set reachable at
+all: dispatch declines any kernel `price::MINTED` has no row for, so a mint that
+followed dispatch would be waiting on the measurement the measurement was
+waiting on. `shuffle::force` breaks the circle and still refuses any kernel the
+runtime probe rejected, so the sweep can price an unpriced kernel and cannot
+time absent silicon.
+
+Two forms exist for asking a CI runner in particular:
+
+```bash
+# is the tree big enough?
+SHENG_CORPUS=/ci/corpus cargo run --release --example mint -- corpus
+# the rows, without the prior
+SHENG_CORPUS=/ci/corpus cargo run --release --example mint -- price
+```
+
+`corpus` measures nothing. It walks the tree, prints the banner, applies the same
+32 MiB memory-residency refusal the real run does, and stops — so a corpus that
+cannot support a price row is caught in seconds instead of after the persistence
+sweep. `price` asks for the rows without the prior, because a corpus assembled to
+be *large* is not a claim about anybody's byte distribution, and a prior printed
+from one would look exactly like something to paste.
 
 ## `survey` — the gate that judges the gate
 

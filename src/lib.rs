@@ -109,9 +109,10 @@
 //! through `memchr`, this crate's one unconditional dependency and itself `no_std`.
 //! Pricing needs none either: every float operation in the crate is `+ - * /` and a
 //! comparison, so there is no `powf`, no `libm`, and no math library behind either.
-//! Even the runtime SSSE3 probe reads `CPUID` directly instead of asking
-//! `std::arch::is_x86_feature_detected!`, because for that particular feature bit the
-//! two are the same question. `--no-default-features` is therefore a `no_std` build;
+//! Even the runtime x86 probes read `CPUID` — and `XCR0`, for the widths whose upper
+//! halves an operating system has to promise to preserve — directly instead of asking
+//! `std::arch::is_x86_feature_detected!`, because they are the same questions asked of
+//! the same registers. `--no-default-features` is therefore a `no_std` build;
 //! an allocator is still required, because the tables are [`Vec`]-shaped.
 //!
 //! Building is where the dependency lives, and only there. A pattern has to be

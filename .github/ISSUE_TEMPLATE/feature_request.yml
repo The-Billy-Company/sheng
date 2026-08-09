@@ -50,7 +50,7 @@ body:
       options:
         - the sieve itself (construction, refutation, the public API)
         - pricing (which patterns can be sieved, and how they are costed)
-        - an architecture lane (NEON, SSSE3, or the scalar fallback)
+        - an architecture lane (a vector kernel in `src/arch/`, or the scalar fallback)
         - the fuzz or differential harnesses
         - documentation
         - not sure

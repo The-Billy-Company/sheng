@@ -284,7 +284,10 @@ fn a_document_shorter_than_anything_measured_gets_no_verdict() {
         judged += 1;
         for len in [floor - 1.0, 8.0, 0.0, f64::NAN] {
             match Sieve::with(pattern, &at(len, Gate::Worth)) {
-                Err(BuildError::Unmodeled { len: got, floor: named }) => {
+                Err(BuildError::Unmodeled {
+                    len: got,
+                    floor: named,
+                }) => {
                     assert!(
                         got.to_bits() == len.to_bits(),
                         "{pattern:?}: decline reported {got} bytes, not the {len} asked for"

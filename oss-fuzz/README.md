@@ -28,10 +28,11 @@ smaller signal to catch it earlier.
 
 The second thing OSS-Fuzz buys is silicon. `shuffle::available()` is what the
 `kernels` target sweeps, and on arm64 it holds exactly one entry, because NEON is
-baseline there and dispatch is never choosing. x86_64 holds three — `Avx2`,
-`Ssse3`, `Scalar` — and `Avx2` is the newest and least-exercised code in the
-crate. OSS-Fuzz runs x86_64, which is why `project.yaml` asks for it specifically
-rather than by default.
+baseline there and dispatch is never choosing. x86_64 holds three or four —
+`Ssse3` and `Scalar` always, `Avx2` and `Avx512` where the machine has them — and
+those wide two are the newest and least-exercised code in the crate, precisely
+because dispatch does not elect either one. OSS-Fuzz runs x86_64, which is why
+`project.yaml` asks for it specifically rather than by default.
 
 ## Before submitting
 

@@ -8,7 +8,7 @@
 Fill in whatever applies, delete what doesn't: -->
 
 - [ ] `cargo test --release` passes locally (both kernel paths if you can —
-      see `src/arch/README.md` for how the scalar/NEON/SSSE3 kernels are
+      see `src/arch/README.md` for how the scalar and vector kernels are
       selected and cross-checked).
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` is clean.
 - [ ] Touched an `unsafe` block: every block still carries a `// SAFETY:`

@@ -32,11 +32,18 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
-  # Clippy and the release-mode test suite both run on real x86_64 (SSSE3) and real
-  # macOS arm64 (NEON) hardware — this matrix *is* the cross-architecture SIMD
-  # differential the crate's soundness rests on, not a stand-in for it. Vector
-  # kernels that only ever run on emulated or cross-compiled targets have never
-  # actually executed the intrinsics this crate ships.
+  # Clippy and the release-mode test suite both run on real x86_64 and real macOS
+  # arm64 hardware — this matrix *is* the cross-architecture SIMD differential the
+  # crate's soundness rests on, not a stand-in for it. Vector kernels that only ever
+  # run on emulated or cross-compiled targets have never actually executed the
+  # intrinsics this crate ships.
+  #
+  # The legs are named for the machine and not for the kernel, because the kernel is
+  # not a property of the leg. `arch::available` probes `CPUID` at runtime, so what an
+  # `x86_64` runner offers is whatever the fleet handed us that morning — a label
+  # reading `x86_64-ssse3` was a guess about someone else's hardware written into a job
+  # name, and it went stale the moment a second x86 rung existed. The `test` leg prints
+  # the ladder it actually got.
   clippy:
     name: clippy (${{ matrix.label }})
     strategy:
@@ -44,9 +51,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            label: x86_64-ssse3
+            label: x86_64
           - os: macos-14
-            label: aarch64-neon
+            label: aarch64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -68,9 +75,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            label: x86_64-ssse3
+            label: x86_64
           - os: macos-14
-            label: aarch64-neon
+            label: aarch64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -85,7 +92,24 @@ jobs:
       # Release, not dev: the SIMD kernels are the whole point of the crate and the
       # soundness/kernel-agreement suites are the tests that matter here, so they run
       # under the profile a real caller links against.
+      #
+      # This overlaps `native`'s six legs on two of its (OS, architecture) pairs, and the
+      # overlap is the point rather than an oversight: no corpus is checked out here, so
+      # `$SHENG_CORPUS` is unset and `common::root` falls back to this crate's own tree.
+      # That is what a downstream `cargo test` in a plain `cargo package` checkout sees,
+      # and the floors in `tests/soundness.rs` are sized for exactly that — a suite that
+      # only ever passed beside ~14 MiB of borrowed source would be green here and red for
+      # a packager.
       - run: cargo test --workspace --release --all-features --locked
+      # The dispatch ladder, printed rather than inferred. `available()` is the one thing
+      # in this crate decided by the *machine* rather than by the target, so a leg that
+      # quietly found fewer kernels than the last run is invisible inside a green suite —
+      # the sweep simply covers less and still passes. It is also the only place CI says
+      # out loud whether this runner has the silicon to differentiate the rungs
+      # `price::DORMANT` still names: an AVX-512 box prints four kernels here and an EPYC
+      # prints three, and which one the fleet handed us is not otherwise recorded
+      # anywhere.
+      - run: cargo test --release --all-features --locked --test kernels -- --nocapture
       - run: cargo run --release --example survey
 
   doc:
@@ -184,6 +208,156 @@ jobs:
       # against it.
       - run: cargo test --locked --no-default-features --test dfa
 
+  # The six native (OS, architecture) legs, on real silicon for each. Stated once in
+  # `native.yml` and called from here and from `release.yml`, which is the arrangement
+  # its own header has always described — it was only ever wired to the second, so the
+  # cross-OS proof this repository advertises on every push happened on none of them.
+  native:
+    name: native
+    uses: ./.github/workflows/native.yml
+    with:
+      cache: true
+
+  # WebAssembly is the one target whose kernel is chosen at *compile* time, and it is
+  # therefore the one no job above can reach. `arch::available` on `wasm32` reads
+  # `target_feature = "simd128"` rather than a probe — a guest has no `CPUID` to ask and no
+  # `XCR0` to read — so the SIMD leg and the scalar leg are two different builds rather
+  # than two branches inside one, and a host job compiles neither.
+  #
+  # Both are built, and the SIMD one is *run*, under a real runtime. That distinction is
+  # the whole value of this job: `u8x16_swizzle` had never executed anywhere until it
+  # executed here, and a kernel that only ever compiled is exactly the state
+  # `tests/kernels.rs` exists to refuse. Emulation is allowed to prove this kernel
+  # correct and is never allowed to price it — see `.github/workflows/mint.yml`, where a
+  # `wasm32` row has to name the runtime and the host underneath it.
+  wasm:
+    name: wasm32 (simd128)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Nothing here pushes with the checkout credential, and leaving it in
+          # .git/config is how it ends up inside an uploaded artifact.
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+          targets: wasm32-wasip1,wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
+        with:
+          tool: wasmtime
+
+      # The `no_std` leg first, and without `simd128`, because that combination is what a
+      # default `wasm32-unknown-unknown` build actually gets: no runtime probe, no vector
+      # module compiled, `Kernel::Scalar` reported honestly. If the `cfg` ladder in
+      # `src/arch/mod.rs` ever stopped cfg-ing the SIMD module away, this is the build
+      # that fails to compile rather than the one that silently ships it.
+      - name: scalar, where the proposal is absent
+        run: cargo clippy --lib --locked --no-default-features --target wasm32-unknown-unknown -- -D warnings
+
+      # `u8x16_swizzle` executing, against the scalar reference it must agree with.
+      #
+      # Two seams make that possible on a target the mint has never reached. `kernels.rs`
+      # drives `Skip` directly rather than through a lane the economics elected —
+      # necessary here, because `wasm32` has no minted row, so its calibration is
+      # `UNMEASURED`, no lane elects a skip, and without the direct seam the wide
+      # classifier would be the one piece of `unsafe` on this target that nothing ever
+      # ran. And the corpus is handed in through a WASI preopen, because a guest cannot
+      # see the checkout: `$SHENG_CORPUS` is the same override a re-minter uses to aim at
+      # their own tree, pointed at `/corpus` here so the real-source soundness pass reads
+      # real source.
+      #
+      # `an_armed_sieve_retires_most_of_what_it_sees` is skipped by name, and only that
+      # one. It audits the *gate's* promise — that a sieve which armed retires a majority
+      # — and on an unpriced target nothing arms, so it has no population to measure and
+      # fails on its own emptiness assertion. That emptiness is the policy working, and
+      # the fact is asserted positively rather than dropped: `policy.rs`'s
+      # `an_unmeasured_machine_declines_instead_of_guessing` runs in this same invocation
+      # and requires the decline to name this arch and this kernel.
+      - name: every kernel this runtime can run agrees with the reference
+        env:
+          RUSTFLAGS: -D warnings -C target-feature=+simd128
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime run --dir=.::/corpus --env SHENG_CORPUS=/corpus --
+        run: |
+          set -euo pipefail
+          cargo test --release --all-features --locked --target wasm32-wasip1 \
+            --test kernels --test soundness --test policy -- --nocapture \
+            --skip an_armed_sieve_retires_most_of_what_it_sees
+
+  # AVX-512, executed. This is the one rung in the ladder whose correctness no runner in
+  # this repository can be relied on to prove: `native.yml`'s x86_64 legs sweep whatever
+  # `arch::available` probed, and a fleet that hands out EPYC parts one morning and Xeon
+  # parts the next turns "is the widest kernel differentiated" into a question about
+  # scheduling. A kernel that has only ever compiled is the exact state
+  # `tests/kernels.rs` exists to refuse, so it gets an emulator rather than an excuse.
+  #
+  # Correctness only, and the boundary is worth stating because it is the whole of this
+  # crate's doctrine: emulation can say whether `vpshufb` on a `zmm` computes the scalar
+  # answer, and it can say nothing whatever about what that costs. `price::MINTED` takes
+  # rows from `mint.yml` on real silicon and from nowhere else, which is why AVX-512 stays
+  # in `price::DORMANT` no matter how green this job is.
+  #
+  # `-skx` is Skylake-X: AVX512 F/CD/BW/DQ/VL, of which this crate's probe wants F and BW.
+  # SDE is a whole emulated CPU rather than a `CPUID` patch, so `xgetbv` answers for the
+  # emulated machine too — which matters here, because the probe reads `XCR0` for the
+  # opmask and upper `zmm` state and a real host without AVX-512 has those bits clear.
+  # If that ever stops being true the guard below fails the job, which is the right
+  # outcome: the alternative is a leg that quietly re-tests SSSE3 under an emulator and
+  # reports it as AVX-512 coverage.
+  avx512:
+    name: x86_64 AVX-512 (Intel SDE)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Nothing here pushes with the checkout credential, and leaving it in
+          # .git/config is how it ends up inside an uploaded artifact.
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      # `sdeVersion` is passed explicitly even though the action documents a default:
+      # its `action.yml` declares the input required and spells the default with a
+      # non-standard `defaultValue:` key that GitHub never injects, so an omitted input
+      # surfaces as `Please, provide value for option "sdeVersion"`.
+      - uses: petarpetrovt/setup-sde@31aa4a8e85e109bef00f1d838613fcc6ec421271 # v5.0
+        with:
+          environmentVariableName: SDE_PATH
+          sdeVersion: 10.8.0
+
+      # Only `kernels`, and only its test binary. Two reasons, and they are the same
+      # reason twice: an emulated CPU is orders of magnitude slower than the silicon
+      # under it, so nothing that can run natively should run here.
+      #
+      # `tests/kernels.rs` is the suite that reaches AVX-512 at all. `soundness.rs`
+      # differentiates *dispatch's* choice, and dispatch under SDE still elects `Ssse3` —
+      # the ladder grows a rung that `price::MINTED` does not price, so the widest
+      # **priced** kernel is unchanged. Which is the permission check working exactly as
+      # written, and it means an emulated leg cannot smuggle an unpriced kernel into an
+      # arming decision even here.
+      #
+      # `--target` names the host triple so the runner applies to the test binary and not
+      # to build scripts, which are host artifacts and have no business inside Pin.
+      - name: the widest x86_64 kernel, actually executed
+        run: |
+          set -euo pipefail
+          export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER="$SDE_PATH/sde64 -skx --"
+          cargo test --release --all-features --locked \
+            --target x86_64-unknown-linux-gnu --test kernels -- --nocapture \
+            | tee sde.log
+          # The guard. `-skx` asking for AVX-512 and this crate's own probe admitting it
+          # are different claims, and only the second one is evidence: the probe is what
+          # `force` validates against, so a ladder without `Avx512` means the sweep ran
+          # the same narrow kernels the native legs already ran and this job proved
+          # nothing it was added to prove.
+          grep -q 'available kernels:.*Avx512' sde.log || {
+            echo "::error::SDE ran but arch::available did not admit Avx512 — see the ladder above"
+            exit 1
+          }
+
   deny:
     name: cargo-deny
     runs-on: ubuntu-latest
@@ -203,7 +377,7 @@ jobs:
   # workflow trusts this job rather than repeating the check under time pressure.
   package:
     name: package
-    needs: [fmt, clippy, test, doc, msrv, no-std, deny]
+    needs: [fmt, clippy, test, doc, msrv, no-std, native, wasm, avx512, deny]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -241,7 +415,7 @@ jobs:
   # upstream failed, which is exactly the case it has to report on.
   release-ready:
     if: always()
-    needs: [fmt, clippy, test, doc, msrv, no-std, deny, package, changelog]
+    needs: [fmt, clippy, test, doc, msrv, no-std, native, wasm, avx512, deny, package, changelog]
     runs-on: ubuntu-latest
     steps:
       - name: every required job is green

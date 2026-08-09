@@ -47,6 +47,21 @@
 //! * **anything else** — no skip. A set with a non-ASCII member needs a second
 //!   table pair to stay exact, and declining costs only the speedup.
 //!
+//! There is no third instrument, and that is a measured decision rather than a gap.
+//! NEON has no `movemask`, so [`Instrument::Wide`] pays a narrowing plus a lane read on
+//! every 16-byte block just to ask whether the block hit — a question whose answer is
+//! usually no. The obvious repair is a *carried mask*: run four blocks with nothing
+//! carried between them, `or` the hit vectors, ask once for all 64 bytes, and narrow
+//! only on the stride that answers yes. Priced against the shipped loop over escape
+//! densities from nothing to one byte in ten, it wins at most 8% — in the streaming
+//! limit of runs so long the block never escapes, which is [`Escape::Never`] and never
+//! reaches this classifier at all — and *loses* by up to a factor of two through the
+//! band a wide set really occupies, where a hit lands inside most strides and the
+//! shipped loop stops one or two blocks in while the carried one has already paid for
+//! four and must then rescan them. Its best case does not clear
+//! [`MARGIN`](crate::price::MARGIN); its realistic case is a regression. A wider stride
+//! is the wrong trade for a loop whose whole purpose is to stop early.
+//!
 //! Every instrument is checked against [`Escape::find_scalar`], the obvious
 //! `set.contains(b)` loop, over every byte value and every set shape the harvest can
 //! produce. A skip that overshoots one escape byte would make the sieve reject a
@@ -210,7 +225,8 @@ pub(crate) mod wide {
     // is no variant left to match and nothing to import.
     #[cfg(any(
         target_arch = "aarch64",
-        all(target_arch = "x86_64", target_feature = "sse2")
+        all(target_arch = "x86_64", target_feature = "sse2"),
+        all(target_arch = "wasm32", target_feature = "simd128")
     ))]
     use crate::arch::Kernel;
 
@@ -226,11 +242,21 @@ pub(crate) mod wide {
             // own precondition.
             Kernel::Neon => unsafe { arch::neon::classify(lo, hi, hay) },
             #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+            // SAFETY: `kernel()` names `Avx512` only where the probe confirmed both
+            // leaf-7 bits, `OSXSAVE` and all five `XCR0` bits — exactly
+            // `arch::avx512::classify`'s own precondition. `arch::force` can only name a
+            // kernel that same probe admitted.
+            Kernel::Avx512 => unsafe { arch::avx512::classify(lo, hi, hay) },
+            #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
             // SAFETY: `kernel()` names `Avx2` only where the probe confirmed the
             // silicon, `OSXSAVE` and `XCR0` — exactly `arch::avx2::classify`'s own
             // precondition. `arch::force` can only name a kernel that same probe
             // admitted.
             Kernel::Avx2 => unsafe { arch::avx2::classify(lo, hi, hay) },
+            #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+            // SAFETY: this arm is only reachable under `target_feature = "simd128"`,
+            // which is the whole of `arch::simd128::classify`'s precondition.
+            Kernel::Simd128 => unsafe { arch::simd128::classify(lo, hi, hay) },
             #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
             // SAFETY: `kernel()` returns `Ssse3` only after its `CPUID` probe
             // confirmed the CPU has it — exactly `arch::ssse3::classify`'s own
@@ -255,12 +281,13 @@ pub(crate) mod wide {
     /// present only where one of them is.
     ///
     /// `step` is passed in rather than read from [`arch::STEP`] because the classifiers
-    /// no longer share one width: a 256-bit step leaves a different remainder than a
-    /// 128-bit one, and a tail that assumed the narrower would silently drop up to
-    /// sixteen bytes of the wider kernel's haystack.
+    /// no longer share one width: a 256- or 512-bit step leaves a different remainder
+    /// than a 128-bit one, and a tail that assumed the narrowest would silently drop up
+    /// to forty-eight bytes of the widest kernel's haystack.
     #[cfg(any(
         target_arch = "aarch64",
-        all(target_arch = "x86_64", target_feature = "sse2")
+        all(target_arch = "x86_64", target_feature = "sse2"),
+        all(target_arch = "wasm32", target_feature = "simd128")
     ))]
     pub(crate) fn tail(lo: &[u8; 16], hi: &[u8; 16], hay: &[u8], step: usize) -> Option<usize> {
         let done = hay.len() - hay.len() % step;

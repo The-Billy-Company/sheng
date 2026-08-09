@@ -5,9 +5,10 @@
 //! set, when one arrives, is taught the detection ladder in one place instead of two.
 //!
 //! The unsafe intrinsics themselves live one level down, one file per instruction
-//! set ([`neon`], [`ssse3`], [`avx2`]) rather than interleaved with the algorithms that
-//! call them: an audit of "what does this crate execute on x86_64" reads two files,
-//! not four half-files split across [`crate::shuffle`] and [`crate::skip`].
+//! set ([`neon`], [`ssse3`], [`avx2`], [`avx512`], [`simd128`]) rather than interleaved
+//! with the algorithms that call them: an audit of "what does this crate execute on
+//! x86_64" reads three files, not six half-files split across [`crate::shuffle`] and
+//! [`crate::skip`].
 //!
 //! # The crate does not run a kernel it has not priced
 //!
@@ -23,19 +24,28 @@
 //! # "Does this target have a byte shuffle?"
 //!
 //! That question is spelled out longhand — `any(target_arch = "aarch64",
-//! all(target_arch = "x86_64", target_feature = "sse2"))` — rather than hidden behind
-//! an alias, because Rust has no `cfg` alias without a build script and this crate
-//! would rather repeat a condition than grow one. Teaching the crate a further
-//! instruction set means touching three groups of sites, every one of them findable by
-//! grepping for `target_feature = "sse2"`:
+//! all(target_arch = "x86_64", target_feature = "sse2"), all(target_arch = "wasm32",
+//! target_feature = "simd128"))` — rather than hidden behind an alias, because Rust has
+//! no `cfg` alias without a build script and this crate would rather repeat a condition
+//! than grow one. Teaching the crate a further instruction set means touching three
+//! groups of sites, every one of them findable by grepping for `target_feature = "sse2"`
+//! and its two siblings above:
 //!
-//! * **what exists** — a module beside [`ssse3`], its arm of the `x86` probe, [`STEP`],
-//!   and its rung of [`available`];
+//! * **what exists** — a module beside [`ssse3`], its arm of the `x86` probe (or, where
+//!   the answer is compile-time, no probe at all), [`STEP`], and its rung of
+//!   [`available`];
 //! * **what dispatches** — the arms [`kernel`] feeds in [`crate::shuffle::refutes`]
 //!   and [`crate::skip::wide::find`];
 //! * **what only a vector caller shares** — the composition kernel's shape
 //!   ([`WAYS`](crate::shuffle::WAYS), `STRIDE`, `IDENTITY`) and
 //!   [`crate::skip::wide::tail`].
+//!
+//! A wider register is *not* one of those groups, and that is the load-bearing part of
+//! the arrangement. [`avx2`] and [`avx512`] carry their own `STEP`, `WAYS` and `STRIDE`
+//! beside their intrinsics, because a 32- or 64-byte register buys more slices of the
+//! same sixteen-block machine rather than a bigger one — so a caller never has to ask
+//! how wide the kernel it dispatched to was, only [`crate::skip::wide::tail`] does, and
+//! it is handed the number.
 
 use core::sync::atomic::{AtomicU8, Ordering};
 
@@ -51,15 +61,26 @@ pub(crate) mod neon;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) mod avx2;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+pub(crate) mod avx512;
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) mod ssse3;
+// `simd128` rather than a bare `target_arch`, and for the opposite reason to the x86_64
+// pair above: there is no runtime probe to fall back on. A WebAssembly guest cannot ask
+// what it is running on — a module declares the SIMD proposal in its own bytecode or it
+// does not — so this `cfg` is the whole of the detection, and a build without it reports
+// `Kernel::Scalar` and means it.
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+pub(crate) mod simd128;
 
-/// Bytes per 128-bit vector step, which is what both `vqtbl1q_u8`/`vld1q_u8` and
-/// `pshufb`/`_mm_loadu_si128` index. [`avx2`] steps two of these at once and keeps its
-/// own doubled constant; every caller that needs a step is handed the one its kernel
-/// actually used rather than assuming this.
+/// Bytes per 128-bit vector step, which is what `vqtbl1q_u8`/`vld1q_u8`,
+/// `pshufb`/`_mm_loadu_si128` and `u8x16_swizzle`/`v128_load` all index. [`avx2`] steps
+/// two of these at once and [`avx512`] four, each keeping its own multiplied constant;
+/// every caller that needs a step is handed the one its kernel actually used rather than
+/// assuming this.
 #[cfg(any(
     target_arch = "aarch64",
-    all(target_arch = "x86_64", target_feature = "sse2")
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    all(target_arch = "wasm32", target_feature = "simd128")
 ))]
 pub(crate) const STEP: usize = 16;
 
@@ -123,6 +144,9 @@ pub const ARCH: &str = if cfg!(target_arch = "aarch64") {
 /// the gate must know rather than discover in production.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kernel {
+    /// `vpshufb` on `zmm` — four 16-lane slices per register, probed at runtime on
+    /// `x86_64` against both the silicon and the operating system.
+    Avx512,
     /// `vpshufb` — two 16-lane slices per register, probed at runtime on `x86_64`
     /// against both the silicon and the operating system.
     Avx2,
@@ -130,6 +154,9 @@ pub enum Kernel {
     Neon,
     /// `pshufb` — probed at runtime on `x86_64`.
     Ssse3,
+    /// `u8x16_swizzle` — decided at compile time on `wasm32`, since a guest has no way
+    /// to ask what it is running on.
+    Simd128,
     /// No byte shuffle on this target: the reference path is the shipping path.
     Scalar,
 }
@@ -150,13 +177,31 @@ impl Kernel {
 
     const fn decode(code: u8) -> Option<Self> {
         Some(match code {
-            1 => Self::Avx2,
-            2 => Self::Neon,
-            3 => Self::Ssse3,
-            4 => Self::Scalar,
+            1 => Self::Avx512,
+            2 => Self::Avx2,
+            3 => Self::Neon,
+            4 => Self::Ssse3,
+            5 => Self::Simd128,
+            6 => Self::Scalar,
             _ => return None,
         })
     }
+
+    /// Every variant, so a test can sweep the ones this silicon *cannot* run and hold
+    /// [`force`] to refusing them — the check that makes every `unsafe` dispatch arm's
+    /// "[`kernel`] said so" precondition worth anything.
+    ///
+    /// Written out rather than derived, and paired with a test that the codes round-trip,
+    /// because a variant added above and forgotten here would silently shrink that sweep
+    /// to the kernels somebody remembered.
+    pub const ALL: &'static [Self] = &[
+        Self::Avx512,
+        Self::Avx2,
+        Self::Neon,
+        Self::Ssse3,
+        Self::Simd128,
+        Self::Scalar,
+    ];
 }
 
 /// Every kernel this silicon can actually execute, **fastest first** and always ending
@@ -171,8 +216,14 @@ pub fn available() -> &'static [Kernel] {
     #[cfg(target_arch = "aarch64")]
     return &[Kernel::Neon, Kernel::Scalar];
 
+    // Every rung this silicon can execute is listed, not only the widest, because a mint
+    // prices what it can reach: one run on an AVX-512 box should return four rows, so the
+    // ladder below it stays measured and a future decision to *stop* dispatching the
+    // widest kernel needs no second machine to make.
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    return if x86::has_avx2() {
+    return if x86::has_avx512() {
+        &[Kernel::Avx512, Kernel::Avx2, Kernel::Ssse3, Kernel::Scalar]
+    } else if x86::has_avx2() {
         &[Kernel::Avx2, Kernel::Ssse3, Kernel::Scalar]
     } else if x86::has_ssse3() {
         &[Kernel::Ssse3, Kernel::Scalar]
@@ -180,9 +231,13 @@ pub fn available() -> &'static [Kernel] {
         &[Kernel::Scalar]
     };
 
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    return &[Kernel::Simd128, Kernel::Scalar];
+
     #[cfg(not(any(
         target_arch = "aarch64",
-        all(target_arch = "x86_64", target_feature = "sse2")
+        all(target_arch = "x86_64", target_feature = "sse2"),
+        all(target_arch = "wasm32", target_feature = "simd128")
     )))]
     &[Kernel::Scalar]
 }
@@ -277,6 +332,12 @@ pub fn force(kernel: Kernel) -> bool {
 /// corruption — which for this crate would mean a refutation computed from a
 /// half-clobbered composition function.
 ///
+/// `AVX-512` is the same story as `AVX2` with more of the register file at stake, so it
+/// is the same two-part question asked of three more `XCR0` bits: the opmask registers
+/// and both upper halves of the widened vector state. Nothing about it is a stronger
+/// silicon claim than AVX2's — it is a strictly *longer* list of things the operating
+/// system has to have promised to save.
+///
 /// One implementation for both configurations, deliberately. A `cfg` that probed via
 /// `std` when it was there and via `CPUID` when it was not would be two answers to a
 /// question this module exists to answer exactly once.
@@ -293,10 +354,22 @@ mod x86 {
     const AVX_BIT: u32 = 1 << 28;
     /// `CPUID.07H:EBX` bit 5.
     const AVX2_BIT: u32 = 1 << 5;
+    /// `CPUID.07H:EBX` bit 16 — the foundation: 512-bit registers and the opmasks.
+    const AVX512F_BIT: u32 = 1 << 16;
+    /// `CPUID.07H:EBX` bit 30 — byte and word lanes, which is where `vpshufb` on a
+    /// `zmm` and the `vptestmb` beside it actually live. `avx512f` alone would compile
+    /// neither, so both bits are the precondition and neither is inferred from the other.
+    const AVX512BW_BIT: u32 = 1 << 30;
     /// `XCR0` bits 1 and 2: the OS preserves the SSE state *and* the upper halves of
     /// the `ymm` registers. Both, because saving one without the other leaves exactly
     /// the corruption the pair is checked for.
     const XCR0_YMM: u64 = 0b110;
+    /// [`XCR0_YMM`] and bits 5, 6 and 7: the opmask registers, the upper 256 bits of
+    /// `zmm0..15`, and the sixteen registers `zmm16..31` that exist only at this width.
+    /// All five, for the same reason the pair above is checked together — a kernel that
+    /// saved the vector halves but not the opmasks would corrupt exactly the mask
+    /// `classify` reads its answer out of.
+    const XCR0_ZMM: u64 = XCR0_YMM | 0b1110_0000;
 
     /// A build told at compile time that it may use an instruction set needs no probe
     /// for it — that is the arm `-C target-cpu=native` takes, and the arm where a
@@ -306,23 +379,44 @@ mod x86 {
         cfg!(target_feature = "ssse3") || (leaves() >= 1 && __cpuid(1).ecx & SSSE3_BIT != 0)
     }
 
+    /// Has the operating system promised to preserve `state` across a context switch?
+    ///
+    /// The half of an `AVX`-family probe that `CPUID` cannot answer, factored out
+    /// because both callers below need exactly it and a second copy of this sequence is
+    /// a second chance to read `XCR0` without first establishing that `XCR0` means
+    /// anything. Short-circuiting is therefore load-bearing rather than stylistic: the
+    /// `XGETBV` on the right of the `&&` is only reached once `OSXSAVE` on its left has
+    /// said the instruction may be executed at all.
+    fn preserved(state: u64) -> bool {
+        let base = __cpuid(1).ecx;
+        base & (OSXSAVE_BIT | AVX_BIT) == OSXSAVE_BIT | AVX_BIT
+        // SAFETY: `_xgetbv` needs `XSAVE`, and `OSXSAVE` just above is precisely the
+        // report that the OS has enabled it.
+            && unsafe { xcr0() } & state == state
+    }
+
     pub(super) fn has_avx2() -> bool {
         if cfg!(target_feature = "avx2") {
             return true;
         }
-        if leaves() < 7 {
-            return false;
-        }
-        let base = __cpuid(1).ecx;
-        if base & (OSXSAVE_BIT | AVX_BIT) != OSXSAVE_BIT | AVX_BIT {
-            return false;
-        }
-        // SAFETY: `_xgetbv` needs `XSAVE`, and `OSXSAVE` just above is precisely the
-        // report that the OS has enabled it.
-        if unsafe { xcr0() } & XCR0_YMM != XCR0_YMM {
+        if leaves() < 7 || !preserved(XCR0_YMM) {
             return false;
         }
         __cpuid_count(7, 0).ebx & AVX2_BIT != 0
+    }
+
+    /// Both leaf-7 bits and all five `XCR0` bits, because this kernel uses `zmm` lanes
+    /// *and* an opmask register and a machine that has one without the other is not one
+    /// it can run on.
+    pub(super) fn has_avx512() -> bool {
+        if cfg!(all(target_feature = "avx512f", target_feature = "avx512bw")) {
+            return true;
+        }
+        if leaves() < 7 || !preserved(XCR0_ZMM) {
+            return false;
+        }
+        let want = AVX512F_BIT | AVX512BW_BIT;
+        __cpuid_count(7, 0).ebx & want == want
     }
 
     /// `CPUID` needs no `unsafe`: the instruction predates the ISA, long mode mandates

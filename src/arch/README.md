@@ -4,12 +4,14 @@ Every `unsafe` SIMD intrinsic in this crate lives here, and nowhere else. `shuff
 and `skip.rs` hold the portable dispatch, the scalar fallback, and the composition
 logic; this module holds only the vector kernels each of them dispatches to.
 
-| module      | what                                                                        |
-| ----------- | --------------------------------------------------------------------------- |
-| `mod.rs`    | the `Kernel` enum, runtime `kernel()` probe, and the shared `STEP` constant |
-| `neon.rs`   | `aarch64` NEON: `sweep_shuffle` (the register kernel) and `classify` (the skip nibble-set test) |
-| `avx2.rs`   | `x86_64` AVX2: the same two kernels at 32 bytes a shuffle — two slices per register, since `vpshufb` is per-128-bit-lane |
-| `ssse3.rs`  | `x86_64` SSSE3: the same two kernels, instruction for instruction           |
+| module       | what                                                                        |
+| ------------ | --------------------------------------------------------------------------- |
+| `mod.rs`     | the `Kernel` enum, runtime `kernel()` probe, and the shared `STEP` constant |
+| `neon.rs`    | `aarch64` NEON: `sweep_shuffle` (the register kernel) and `classify` (the skip nibble-set test) |
+| `avx512.rs`  | `x86_64` AVX-512: the same two kernels at 64 bytes a shuffle — four slices per register, and a mask register in place of the movemask |
+| `avx2.rs`    | `x86_64` AVX2: the same two kernels at 32 bytes a shuffle — two slices per register, since `vpshufb` is per-128-bit-lane |
+| `ssse3.rs`   | `x86_64` SSSE3: the same two kernels, instruction for instruction           |
+| `simd128.rs` | `wasm32` SIMD128: the same two kernels at 16 bytes, `u8x16_swizzle` for the shuffle |
 
 Each is `#[cfg]`-gated to its own architecture, so an `aarch64` build never compiles —
 let alone links — the x86_64 bodies, or the reverse. Every `unsafe fn` here carries

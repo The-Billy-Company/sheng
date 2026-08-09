@@ -89,9 +89,9 @@ moved.
 
 ## Unsafe Code
 
-`shuffle.rs` and `skip.rs` dispatch into hand-written NEON, AVX2 and SSSE3, which
-live one file per instruction set in `src/arch/`. New `unsafe` is accepted, and it
-carries three obligations in the same PR:
+`shuffle.rs` and `skip.rs` dispatch into hand-written NEON, AVX-512, AVX2, SSSE3
+and WASM SIMD128, which live one file per instruction set in `src/arch/`. New
+`unsafe` is accepted, and it carries three obligations in the same PR:
 
 1. **A scalar reference** stating the same thing in safe Rust, which the tests
    compare against rather than reimplementing the vector logic.
@@ -109,6 +109,14 @@ running it would price arming with some other kernel's nanoseconds. Dispatch wak
 only once somebody runs `.github/workflows/mint.yml` on that hardware and pastes the
 rows in. Until then `tests/kernels.rs`, the `kernels` fuzz target, and
 `shuffle::force` are what exercise it.
+
+And a fifth, which is what keeps the fourth from turning into a habit: add the
+kernel to `price::DORMANT` with the reason it is unpriced. That list is held to
+`price::MINTED` in both directions by a test, so leaving a kernel out fails the
+build and landing its row later fails the build until the line is deleted. An
+unminted kernel is a plan; the same kernel undeclared is indistinguishable
+from a row somebody dropped, which costs a machine its throughput while every
+test still passes.
 
 ## Every Change Carries Its Own News
 

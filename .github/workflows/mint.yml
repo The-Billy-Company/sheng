@@ -13,16 +13,19 @@ name: Mint
 #     workflow is the only thing that can wake it;
 #   * `src/shuffle.rs` or `src/skip.rs` changed what the sieve executes, which
 #     invalidates every `sieve` and `skip_excursion` coefficient at once;
-#   * an (architecture, kernel) pair this crate dispatches to has no row, which today
-#     means x86_64's `Avx2` and its scalar fallback.
+#   * an (architecture, kernel) pair this crate dispatches to has no row. `price::DORMANT`
+#     is the list, with a reason per entry, and its own test holds it to `price::MINTED` in
+#     both directions — so a row landed here has to delete a line there, and that list
+#     going empty is this workflow's finish line.
 on:
   workflow_dispatch:
     inputs:
       legs:
         description: >-
-          Which hardware to mint on. `x86_64` is the pair that needs it — arm64's NEON
-          row is minted and its scalar kernel is unreachable, since NEON is baseline
-          there and always priced.
+          Which hardware to mint on. `x86_64` is the architecture that needs it: three of
+          its four rungs are unpriced, and the widest one a runner has is the one dispatch
+          would elect if it were. arm64's NEON row is minted and its scalar kernel is
+          unreachable, since NEON is baseline there and always priced.
         type: choice
         default: x86_64
         options: [x86_64, arm64, all]
@@ -88,15 +91,18 @@ jobs:
           # .git/config is how it ends up inside an uploaded artifact.
           persist-credentials: false
 
-      # The same four pinned trees `native.yml` surveys against, and pinned for the same
+      # The four pinned trees `native.yml` surveys against, and pinned for the same
       # reason: a coefficient is only comparable across legs and across runs if every
       # leg read the same bytes, and `main` is not a set of bytes.
       #
-      # Corpus size is load-bearing here in a way it is not for a prior. A price row is
-      # nanoseconds per byte read from *memory*; a corpus small enough to sit in L3
-      # measures cache bandwidth and would understate every walk in the row while
-      # leaving the ratios that the gate actually reads quietly wrong. The floor below
-      # is what refuses to print a row measured against cache.
+      # Corpus size is load-bearing here in a way it is not for a prior, and it is why
+      # this list is longer than `native.yml`'s. A price row is nanoseconds per byte read
+      # from *memory*; a corpus small enough to sit in a last-level cache measures cache
+      # bandwidth instead, understating every walk in the row and leaving the ratios the
+      # gate actually reads quietly wrong. `examples/mint.rs` refuses outright under
+      # 32 MiB — and these four repositories are ~14 MiB together, which is past
+      # `survey`'s 8 MiB prior floor and nowhere near a price row's. Four upstream trees
+      # carry the rest.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: The-Billy-Company/irregex
@@ -122,6 +128,70 @@ jobs:
           persist-credentials: false
           path: corpus/blast
 
+      # The volume, and it is chosen rather than scraped. Four upstream standard
+      # libraries, one subtree each, pinned by commit like the four above:
+      #
+      #   zig/lib/std              13.8 MiB    .zig
+      #   TypeScript/src           18.8 MiB    .ts
+      #   swift-syntax/Sources      5.7 MiB    .swift
+      #   go/src/{net,runtime}      8.1 MiB    .go
+      #
+      # ~46 MiB on top of the ~14 above, so ~60 MiB reaches `examples/mint.rs`. That
+      # number is picked from both ends. It clears the 32 MiB floor with room for a
+      # pinned tree to shrink under a `SHENG_KINDS` change without silently dropping
+      # under, and it stays below the mint's own 64 MiB `WANT_BYTES` budget — which is
+      # the load-bearing half, because at the budget the walk stops mid-tree and what got
+      # measured is a deterministic *prefix* of this list rather than this list. `mint --
+      # corpus` prints which of the two happened, so a tip-over is a line in the log
+      # rather than a quiet change of corpus.
+      #
+      # Five language families, and that is the second reason not to reach the volume by
+      # cloning one large repository: a per-byte price is read through a byte-class
+      # histogram, and a corpus of one language is a claim about that language's
+      # punctuation density. All four are permissively licensed (MIT, Apache-2.0,
+      # Apache-2.0, BSD-3-Clause) and nothing here redistributes them — they are read in
+      # a runner and thrown away with it.
+      #
+      # `blob:none` plus a cone sparse-checkout, because `golang/go` and
+      # `microsoft/TypeScript` at full depth are minutes of the hour this workflow is
+      # trying to spend on measurement.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ziglang/zig
+          ref: 5ad91a646a753cc3eecd8751e61cf458dadd9ac4 # 0.14.0
+          persist-credentials: false
+          path: corpus/zig
+          filter: blob:none
+          sparse-checkout: lib/std
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: microsoft/TypeScript
+          ref: a5e123d9e0690fcea92878ea8a0a382922009fc9 # v5.7.3
+          persist-credentials: false
+          path: corpus/typescript
+          filter: blob:none
+          sparse-checkout: src
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: swiftlang/swift-syntax
+          ref: 0687f71944021d616d34d922343dcef086855920 # 600.0.1
+          persist-credentials: false
+          path: corpus/swift-syntax
+          filter: blob:none
+          sparse-checkout: Sources
+      # `src/net` and `src/runtime` rather than all of `src`: the whole tree is ~40 MiB of
+      # Go alone, which would both blow the budget and make this corpus a Go corpus.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: golang/go
+          ref: 3901409b5d0fb7c85a3e6730a59943cc93b2835c # go1.24.0
+          persist-credentials: false
+          path: corpus/go
+          filter: blob:none
+          sparse-checkout: |
+            src/net
+            src/runtime
+
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: stable
@@ -136,34 +206,26 @@ jobs:
       - name: which kernels this runner actually has
         run: cargo test --release --all-features --locked --test kernels -- --nocapture
 
+      # The corpus check, before the measurement rather than after it. `mint` refuses a
+      # sub-32-MiB tree by assertion wherever that assertion happens to sit, and it sits
+      # *after* the persistence sweep — so a leg whose corpus checkout shrank would spend
+      # most of an hour to discover a precondition. `mint -- corpus` walks the same tree
+      # with the same code and applies the same floor in seconds, which makes this a gate
+      # rather than a postmortem, and means it cannot pass a corpus the run then rejects.
+      - name: refuse a row measured against cache
+        env:
+          SHENG_CORPUS: ${{ github.workspace }}/corpus
+        run: cargo run --release --example mint -- corpus
+
+      # `price`, not a bare run: the prior half of this run would be a claim about a
+      # corpus assembled to be *large* rather than to be representative of anything, and
+      # it would print in a form that looks exactly like something to paste into
+      # `src/prior/minted.rs`. The rows are what this workflow came for.
       - name: mint every kernel this machine can run
         env:
           SHENG_CORPUS: ${{ github.workspace }}/corpus
           LABEL: ${{ matrix.label }}
-        run: cargo run --release --example mint | tee "mint-$LABEL.txt"
-
-      # `mint` prints its own corpus size in the banner; this is what makes that number
-      # a gate instead of a comment. 8 MiB is `examples/survey.rs`'s own floor, for the
-      # identical reason.
-      - name: refuse a row measured against cache
-        env:
-          LABEL: ${{ matrix.label }}
-        run: |
-          set -euo pipefail
-          python3 - "mint-$LABEL.txt" <<'PY'
-          import re, sys
-          banner = open(sys.argv[1], encoding="utf-8", errors="replace").read()
-          got = re.search(r"([\d.]+) MiB from ", banner)
-          if not got:
-              raise SystemExit("mint printed no corpus banner — nothing was measured")
-          mib = float(got.group(1))
-          if mib < 8.0:
-              raise SystemExit(
-                  f"corpus is {mib} MiB, under the 8 MiB a per-byte price needs to be "
-                  "about memory rather than cache — these rows are not publishable"
-              )
-          print(f"corpus {mib} MiB: above the floor")
-          PY
+        run: cargo run --release --example mint -- price | tee "mint-$LABEL.txt"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

@@ -55,7 +55,7 @@ satisfying the `Dfa` trait is the way in. What stays is everything that runs:
 the projection, the lattice harvest, the selectivity model, the vector kernels,
 and the arming gate. There is no `powf`, no `libm`, and no math library behind
 either — every float operation in the crate is `+ - * /` and a comparison — and
-the SSSE3 probe is read from `CPUID` directly rather than through
+the x86 feature probes read `CPUID` and `XCR0` directly rather than through
 `std::arch::is_x86_feature_detected!`, so nothing of sheng's own is lost. An
 allocator is still required; the transition tables are `Vec`-shaped.
 
@@ -74,10 +74,28 @@ Six targets, x86_64 and arm64, all equally first-class: Linux, macOS, and
 Windows on each.
 
 `src/arch/` dispatches on `target_arch` alone, never the OS: one NEON kernel and
-two runtime-probed x86_64 kernels — AVX2, SSSE3 — behind all six.
+three runtime-probed x86_64 kernels — AVX-512, AVX2, SSSE3 — behind all six.
 [`.github/workflows/native.yml`](.github/workflows/native.yml) runs every cell
 on real, never-emulated silicon on every push, and re-checks the economic gate
 against real source text.
+
+Which kernel a machine _runs_ is a narrower question than which it can execute,
+and deliberately so: dispatch elects the widest kernel a calibration row was
+measured on, so an unminted kernel is inert rather than trusted. Today that
+leaves SSSE3 the widest x86_64 rung in service, with the two above it
+implemented, differentially tested on real silicon, and named in
+[`price::DORMANT`][dormant] with the reason — a list whose entries are deleted by
+[`.github/workflows/mint.yml`](.github/workflows/mint.yml) rather than by
+argument. See [Calibration](#calibration).
+
+`wasm32` is a seventh target and the one exception to the paragraph above, since
+a guest has no `CPUID` to probe: `-C target-feature=+simd128` chooses between the
+SIMD128 kernel and the scalar one at compile time. CI runs the differential under
+`wasmtime`. It has no minted row either — and a row there would be a claim about
+the runtime and the host under it as much as about the guest — so a sieve
+declines on `wasm32` unless the caller supplies its own `Calibration`.
+
+[dormant]: https://docs.rs/sheng/latest/sheng/price/constant.DORMANT.html
 
 ## Usage
 
@@ -172,6 +190,17 @@ Mint the rest with `cargo run --release --example mint`, pointing
 `BuildError::Uncalibrated` — fail-closed, since guessing another machine's
 silicon is deliberately not offered.
 
+One run prints a row for every kernel the silicon can execute, not just the one
+dispatch chose, and that is what makes a new instruction set reachable at all:
+since dispatch declines a kernel with no row, a mint that followed dispatch would
+be waiting on the measurement the measurement was waiting on. Pasting a row in is
+what wakes a kernel, and it comes with a deletion — `price::DORMANT` names the
+same kernel and its reason, held to `price::MINTED` in both directions by a test,
+so a row landed there fails the build until the line here is gone. A kernel
+nobody has minted yet and a kernel whose row somebody dropped are otherwise the
+same absence, and the second one costs a machine its throughput while every test
+still passes.
+
 ## Layout
 
 One deep package behind one type; each module is a pipeline stage. `Sieve` is
@@ -181,8 +210,8 @@ exposes their measured types for override.
 - **`lib.rs`** — `Sieve`, the arming decision, `Policy`.
 - **`projection.rs`** — reachable core states, the byte-class partition.
 - **`lattice.rs`** — the SP-partition closure, which quotients to conjoin.
-- **`shuffle.rs`** — the register kernel, over `arch/`'s NEON, AVX2, SSSE3 and
-  a scalar reference.
+- **`shuffle.rs`** — the register kernel, over `arch/`'s NEON, AVX-512, AVX2,
+  SSSE3, SIMD128 and a scalar reference.
 - **`skip.rs`** — the next byte that leaves the start block, exactly.
 - **`selectivity.rs`** — the joint (block, class) chain that predicts `f`.
 - **`prior/`** — what a byte is likely to be, given the byte before it.

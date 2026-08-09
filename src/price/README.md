@@ -8,7 +8,7 @@ and re-decide never touch each other's file.
 | ----------------- | ------------------------------------------------------------------------ |
 | `gate.rs`         | the worth-test arithmetic itself: `survival`, `CostFact`, `NOMINAL_LEN` — pure, no measured numbers |
 | `calibration.rs`  | the `Calibration` shape and its per-byte pricing methods, plus `active()` |
-| `minted.rs`       | nothing but the measured rows: `MACOS_AARCH64_NEON`, `LINUX_X86_64_SSSE3`, `UNMEASURED`, `MINTED` |
+| `minted.rs`       | nothing but the measured rows — `MACOS_AARCH64_NEON`, `LINUX_X86_64_SSSE3`, `UNMEASURED`, `MINTED` — and `DORMANT`, which names the kernels they do not price |
 
 `mod.rs` carries the module's own doc (the scale-invariance argument, why nanoseconds
 rather than cycles) and re-exports every public name from all three files, so
@@ -19,3 +19,10 @@ public surface.
 Re-mint with `cargo run --release --example mint`; it prints a `Calibration` literal
 ready to paste into `minted.rs`. Never hand-edit a coefficient — a number with no
 `host`/`minted` provenance beside it is an anecdote, not a measurement.
+
+One run prints a row for every kernel the silicon can execute, not just the one
+dispatch elected, because dispatch will not elect a kernel this file has no row
+for — so a mint that followed dispatch could never reach a newly added
+instruction set. Pasting a row in is therefore what wakes a kernel, and it comes
+with a deletion: `DORMANT` names the same kernel and its reason, and `minted.rs`'s
+own tests hold the two lists to each other in both directions.

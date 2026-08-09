@@ -56,12 +56,18 @@ impl Rng {
     }
 }
 
-/// Lengths that straddle both vector widths' step and chunk boundaries, plus the
-/// remainders either side of each — a 256-bit classifier leaves a different tail than a
-/// 128-bit one, and a dropped remainder is silent rather than loud.
+/// Lengths that straddle every vector width's step and chunk boundaries, plus the
+/// remainders either side of each — a 512-bit classifier leaves a different tail than a
+/// 256-bit one and a different one again from a 128-bit one, and a dropped remainder is
+/// silent rather than loud.
+///
+/// The widest kernel slices a chunk sixteen ways, so its interesting lengths are the
+/// multiples of sixteen either side of a whole step (64) and of a whole chunk (256) —
+/// below sixteen bytes it cannot slice at all and the scalar finish covers everything.
 fn lengths() -> impl Iterator<Item = usize> {
     (0..=40).chain([
-        63, 64, 65, 127, 128, 129, 255, 256, 257, 258, 511, 512, 513, 1023, 1024,
+        47, 48, 49, 63, 64, 65, 79, 80, 81, 127, 128, 129, 191, 192, 193, 255, 256, 257, 258, 271,
+        272, 273, 511, 512, 513, 1023, 1024,
     ])
 }
 
@@ -129,8 +135,9 @@ fn classifier_agrees(kernel: Kernel) -> usize {
         let Some(filler) = (0..=255u8).find(|b| !escape.contains(b)) else {
             continue;
         };
-        // Past two 256-bit steps, so a whole-block loop and its tail are both live.
-        for len in 1..=80usize {
+        // Past two 512-bit steps, so a whole-block loop and its tail are both live on the
+        // widest classifier as well as the narrow ones.
+        for len in 1..=144usize {
             for at in 0..len {
                 let mut hay = vec![filler; len];
                 hay[at] = needle;
@@ -178,8 +185,10 @@ fn every_kernel_this_silicon_can_run_agrees_with_the_scalar_reference() {
     }
 
     // A kernel the probe did not admit must be unforceable, because that refusal is
-    // the entire reason every `unsafe` dispatch arm may trust `kernel()`.
-    for absent in [Kernel::Avx2, Kernel::Neon, Kernel::Ssse3, Kernel::Scalar] {
+    // the entire reason every `unsafe` dispatch arm may trust `kernel()`. Swept from
+    // `Kernel::ALL` rather than a list written out here, so a variant added to the enum
+    // cannot quietly skip this check by nobody remembering to name it twice.
+    for &absent in Kernel::ALL {
         if !available.contains(&absent) {
             assert!(
                 !sheng::shuffle::force(absent),

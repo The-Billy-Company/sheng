@@ -18,7 +18,7 @@ jobs:
   # or building a `regex-automata` DFA. Two things are excluded on purpose, for two
   # different reasons:
   #
-  # * The hand-written NEON and SSSE3 in `src/arch/`, reached from four
+  # * The hand-written intrinsics in `src/arch/`, reached from four
   #   `skip::tests` and from every integration test in `tests/`. These are checked
   #   instead by real silicon in `ci.yml`'s cross-architecture matrix, running the
   #   actual instructions rather than an interpreter's approximation of them.

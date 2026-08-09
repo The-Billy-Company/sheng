@@ -70,13 +70,14 @@ rather than bounce you.
   slice's running max at the lane the real trajectory entered on. Reading a
   different lane under-reports an accept, and under-reporting an accept is the
   unsound direction.
-- **Memory unsafety in the vector paths.** `arch/{neon,ssse3,avx2}.rs` are
+- **Memory unsafety in the vector paths.** The files under `src/arch/` are
   hand-written intrinsics behind `unsafe`, dispatched into by `shuffle.rs` and
   `skip.rs`. A lane index, a length, or an alignment that can be driven out of
-  bounds by haystack content is in scope. AVX2 additionally rests on a runtime
-  probe of the *operating system* as well as the silicon — the `OSXSAVE` bit and
-  `XCR0`'s promise about the upper half of `ymm` — so a machine on which that
-  probe admits a kernel the OS will not preserve state for is in scope too.
+  bounds by haystack content is in scope. AVX2 and AVX-512 additionally rest on
+  a runtime probe of the *operating system* as well as the silicon — the
+  `OSXSAVE` bit and `XCR0`'s promise about the upper half of `ymm`, and for
+  AVX-512 the opmask and upper `zmm` state too — so a machine on which that
+  probe admits a kernel the OS will not preserve state for is in scope as well.
 - **Unbounded work from a pattern.** A pattern is compiled into a DFA before it
   is quotiented. Input that makes construction consume memory or time out of
   proportion to its size is in scope, though see below for what is not.
@@ -107,10 +108,17 @@ kind of report we want:
   property of the construction and exists the moment a quotient does;
 - dispatch reports the kernel it chose, so a vector-versus-scalar differential
   cannot pass by quietly having tested the scalar path twice;
-- every vector path is exercised on real silicon - NEON on arm64, AVX2 and SSSE3
+- every vector path a runner can execute is exercised on real silicon - NEON on
+  arm64, and whichever of AVX-512, AVX2 and SSSE3 the machine probes as present
   on x86_64 - against a large battery of mutated haystacks each, natively on all
-  six Windows/Linux/macOS × x86_64/arm64 targets `.github/workflows/native.yml`
-  covers, never under emulation;
+  six Windows/Linux/macOS × x86_64/arm64 targets
+  `.github/workflows/native.yml` covers, never under emulation. Two paths are
+  reached by an emulator instead, and both because no native runner can be
+  relied on to reach them: `wasm32`'s SIMD128 under `wasmtime`, since a guest
+  has no silicon at all, and AVX-512 under Intel SDE, since which x86_64 parts
+  the runner fleet allocates is not something a workflow decides. Emulation is
+  allowed to prove a kernel correct and is never allowed to price one - neither
+  has a calibration row, and both are named in `price::DORMANT` for that reason;
 - a kernel dispatch would not have chosen is still differentiated, because
   `arch::kernel` returns the fastest kernel `price::MINTED` holds a row for and
   the newest instruction set is therefore the last one it reaches -

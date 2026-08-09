@@ -75,8 +75,10 @@ body:
     attributes:
       label: Platform and target
       description: >-
-        `rustc --version`, the OS, and which lane you are on - `aarch64`/NEON,
-        `x86_64`/SSSE3, or the scalar fallback. The lane matters: the vector and
+        `rustc --version`, the OS, and which lane you are on. `sheng::shuffle::kernel()`
+        answers that exactly, and it is worth pasting rather than guessing, because
+        dispatch elects the widest *priced* kernel and not the widest one your CPU
+        has. The lane matters: the vector and
         scalar paths are separate code, and a bug in one is often absent in the
         other.
       placeholder: "rustc 1.90.0, macOS 15 aarch64/NEON"

@@ -18,7 +18,23 @@
 //! cargo run --release --example mint                       # SOURCE, plus a row per kernel
 //! SHENG_CORPUS=/tmp/gutenberg SHENG_KINDS=txt \
 //!     cargo run --release --example mint -- prose          # PROSE alone
+//! SHENG_CORPUS=/ci/corpus cargo run --release --example mint -- price   # rows alone
+//! SHENG_CORPUS=/ci/corpus cargo run --release --example mint -- corpus  # is it big enough?
 //! ```
+//!
+//! `price` names no prior; it is the *other* half asked for alone, and it exists for the
+//! same reason a prior can be. A calibration row has to be minted over a corpus big
+//! enough to reach main memory, which on a CI runner means bytes nobody here chose as a
+//! byte process — so the prior half of that run would be a claim about a corpus that is
+//! not any of the four shipped ones, printed in a form that looks exactly like something
+//! to paste. `.github/workflows/mint.yml` therefore asks for the half it came for.
+//!
+//! `corpus` asks for neither half. It walks the tree, prints the banner, applies the
+//! [`MEMORY_FLOOR`] refusal and stops — the precondition of a price row, separated from
+//! the row so it can be checked before the measurement instead of during it. A CI leg
+//! that assembled too small a corpus should learn that in seconds rather than after
+//! paying for a persistence sweep it will throw away, and because the gate walks the
+//! corpus with the same code the run does, it cannot pass a tree the run then rejects.
 //!
 //! `$SHENG_KINDS` is not optional for that second form: a tree of prose, JSON, or logs
 //! is invisible to the source-extension default however `$SHENG_CORPUS` is aimed, and
@@ -98,6 +114,29 @@ const ROUNDS: usize = 7;
 /// nobody timed.
 const SUPPORT: u64 = 1 << 10;
 
+/// The refusal that keeps a price row from describing a cache.
+///
+/// A tree smaller than [`MEMORY_FLOOR`] cannot produce a memory-resident column, and the
+/// failure is silent rather than loud: `corpus_bytes` returns everything it found, so both
+/// requests come back holding the *same bytes* and the two columns agree to four decimal
+/// places. That reads exactly like the finding "residency does not matter on this
+/// machine" — which is how it was in fact read, for an afternoon, off the 0.5 MiB tree
+/// this file sits in.
+///
+/// So it is a hard refusal rather than a warning. A row is a claim about a memory system,
+/// and a mint that never reached memory has no business printing one.
+fn memory_resident(total: usize) {
+    assert!(
+        total > MEMORY_FLOOR,
+        "the corpus at {} is {:.2} MiB, under the {} MiB a memory-resident column needs \
+         — both columns would hold the same bytes and agree by construction. Aim \
+         $SHENG_CORPUS at a tree larger than any last-level cache.",
+        common::root().display(),
+        total as f64 / (1 << 20) as f64,
+        MEMORY_FLOOR >> 20
+    );
+}
+
 fn main() {
     // The name of the prior being minted, and — because a run is a claim about either
     // a corpus or a machine and never both — which halves run at all. Named, the mint
@@ -105,11 +144,23 @@ fn main() {
     // (architecture, kernel), so pasting one would overwrite a row that was measured
     // over the bytes its callers really search.
     let named = std::env::args().nth(1);
-    let prior = named
+    let asked = named
         .as_deref()
         .unwrap_or("SOURCE")
         .trim()
         .to_ascii_uppercase();
+    // The half of the output this run is a claim about. `PRICE` is not a prior's name —
+    // see the module documentation for why a mint aimed at a CI-sized corpus asks for the
+    // rows without the prior that corpus would otherwise imply.
+    let prices_only = asked == "PRICE";
+    // Neither a prior nor a measurement: the corpus check on its own, so the thing that
+    // can refuse an hour of a runner's time can be asked *before* the hour. See below.
+    let corpus_only = asked == "CORPUS";
+    let prior = if prices_only || corpus_only {
+        "SOURCE".into()
+    } else {
+        asked
+    };
     let docs = common::corpus_bytes(WANT_BYTES);
     let total: usize = docs.iter().map(Vec::len).sum();
     println!(
@@ -121,32 +172,43 @@ fn main() {
         common::root().display()
     );
 
-    persistence(&docs, &prior);
-    let freq = histogram(&docs);
-    byte_table(&freq, &prior);
-    if named.is_some() {
-        println!("// prior {prior} only — paste both constants into src/prior/minted.rs.");
+    // The floor asked in isolation, which is the whole of `CORPUS` mode. The check below
+    // is a *precondition* of a price row, not a finding about one, and leaving it to fire
+    // where it fires means a leg that assembled too small a corpus learns so only after
+    // paying for the persistence sweep — an assertion is a fine way to refuse to publish
+    // and a poor way to spend a runner. Same reading of the same bytes by the same
+    // walker, so the gate cannot disagree with the run it gates.
+    if corpus_only {
+        memory_resident(total);
+        // Whether the budget bound before the tree ran out. Both outcomes are valid rows,
+        // but only one of them is a claim about the corpus somebody assembled: at the
+        // budget the walk stops mid-tree, so what got measured is a deterministic
+        // *prefix* — the sort in `common::walk` makes it the same prefix every run, and
+        // not the same thing as the tree named in the workflow.
+        println!(
+            "// corpus admits a memory-resident column{}",
+            if total >= WANT_BYTES {
+                ", and is larger than the budget — the walk read a prefix of it"
+            } else {
+                ", entire"
+            }
+        );
         return;
     }
 
-    // A tree smaller than the memory-resident budget cannot produce a memory-resident
-    // column, and the failure is silent rather than loud: `corpus_bytes` returns
-    // everything it found, so both requests come back holding the *same bytes* and the
-    // two columns agree to four decimal places. That reads exactly like the finding
-    // "residency does not matter on this machine" — which is how it was in fact read,
-    // for an afternoon, off the 0.5 MiB tree this file sits in.
-    //
-    // So it is a hard refusal rather than a warning. A row is a claim about a memory
-    // system, and a mint that never reached memory has no business printing one.
-    assert!(
-        total > MEMORY_FLOOR,
-        "the corpus at {} is {:.2} MiB, under the {} MiB a memory-resident column needs \
-         — both columns would hold the same bytes and agree by construction. Aim \
-         $SHENG_CORPUS at a tree larger than any last-level cache.",
-        common::root().display(),
-        total as f64 / (1 << 20) as f64,
-        MEMORY_FLOOR >> 20
-    );
+    if !prices_only {
+        persistence(&docs, &prior);
+    }
+    let freq = histogram(&docs);
+    if !prices_only {
+        byte_table(&freq, &prior);
+        if named.is_some() {
+            println!("// prior {prior} only — paste both constants into src/prior/minted.rs.");
+            return;
+        }
+    }
+
+    memory_resident(total);
 
     // The cache-resident corpus gets its own histogram, and it has to. Both excursion
     // solves invert a cost formula in which the escape *rate* is a known — so feeding

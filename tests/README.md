@@ -13,7 +13,7 @@ asks whether the decision to use one is secretly a claim about a single laptop.
 | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `a_refutation_is_never_wrong_on_mutated_haystacks`   | a quotient that rejects a matching document, over 4,000 haystacks spliced from the pattern's own alphabet so real matches actually occur                 |
 | `a_refutation_is_never_wrong_on_real_source_bytes`   | the same, against this repository's real files rather than a generator                                                                                   |
-| `every_accelerated_kernel_agrees_with_the_scalar_reference` | a NEON or SSSE3 lane diverging from the scalar definition — and, first, dispatch quietly having chosen `scalar`, which would make the comparison vacuous |
+| `every_accelerated_kernel_agrees_with_the_scalar_reference` | a vector lane diverging from the scalar definition — and, first, dispatch quietly having chosen `scalar`, which would make the comparison vacuous |
 | `an_armed_sieve_retires_most_of_what_it_sees`        | a sieve that armed on a model's promise and then rejected almost nothing                                                                                 |
 
 ## Why the first three run ungated
