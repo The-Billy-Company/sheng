@@ -125,8 +125,8 @@ Sheng pays when one pattern crosses many documents and most don't match — a
 corpus scan, a log sweep, a rule slate over a stream. The gate answers in a
 fraction of a millisecond. Three properties arm a pattern:
 
-- **A distinctive alphabet** — `[0-9]{3}-[0-9]{4}` is the archetype; digits and a
-  hyphen refute almost every position in prose or code.
+- **A distinctive alphabet** — `[0-9]{3}-[0-9]{4}` is the archetype; digits and
+  a hyphen refute almost every position in prose or code.
 - **A rival with no cheap accelerator** — `panic!\(` is the other face; its
   `memchr` lead byte is too common to skip past.
 - **Documents in the low kilobytes** — survival rises with length, so a filter
