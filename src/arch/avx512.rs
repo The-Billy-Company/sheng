@@ -73,18 +73,35 @@ pub(crate) unsafe fn sweep_shuffle(q: &Quotient, hay: &[u8]) -> bool {
     /// The 64-byte register holding one transition row per 128-bit lane, in slice
     /// order — the one place this kernel pays for its width.
     ///
+    /// Four explicit parameters rather than a `[*const u8; 4]` built by
+    /// [`core::array::from_fn`], which is [`super::avx2`]'s `pair` shape and is load-
+    /// bearing rather than cosmetic. `from_fn` here did not inline: a release build put
+    /// eight `callq`s to its `FnMut` machinery in this kernel's hot loop, and the
+    /// unindexable closure kept LLVM from unrolling the four-chain loop, which in turn
+    /// made `compose` and `high` addressable and spent a 64-byte spill and reload on each
+    /// of them every step —
+    ///
+    ///     vpshufb   (%rax,%rbx), %zmm0, %zmm0   ; compose[reg], from the stack
+    ///     vmovdqa64 %zmm0, (%rax,%rbx)          ; and straight back to it
+    ///
+    /// — on a target with thirty-two `zmm` registers and eight of them wanted. That is
+    /// why this kernel merely matched `avx2` (0.335 against 0.290 ns/B) despite reading
+    /// four times the bytes per step: not the width, and not the frequency, but a hot
+    /// loop that went through memory. `avx2` and `ssse3` never showed it because neither
+    /// needed more than two rows, so neither reached for `from_fn`.
+    ///
     /// # Safety
     ///
     /// Every pointer must be readable for [`LANES`](crate::lattice::LANES) bytes.
     #[inline(always)]
-    unsafe fn quad(rows: [*const u8; 4]) -> __m512i {
+    unsafe fn quad(a: *const u8, b: *const u8, c: *const u8, d: *const u8) -> __m512i {
         // SAFETY: the caller guarantees each pointer addresses a full 16-byte row.
         unsafe {
             let load = |p: *const u8| _mm_loadu_si128(p.cast::<__m128i>());
-            let z = _mm512_castsi128_si512(load(rows[0]));
-            let z = _mm512_inserti32x4::<1>(z, load(rows[1]));
-            let z = _mm512_inserti32x4::<2>(z, load(rows[2]));
-            _mm512_inserti32x4::<3>(z, load(rows[3]))
+            let z = _mm512_castsi128_si512(load(a));
+            let z = _mm512_inserti32x4::<1>(z, load(b));
+            let z = _mm512_inserti32x4::<2>(z, load(c));
+            _mm512_inserti32x4::<3>(z, load(d))
         }
     }
 
@@ -103,15 +120,20 @@ pub(crate) unsafe fn sweep_shuffle(q: &Quotient, hay: &[u8]) -> bool {
             let mut compose = [identity; shuffle::WAYS];
             let mut high = [identity; shuffle::WAYS];
             for step in 0..stride {
-                for (reg, (f, h)) in compose.iter_mut().zip(&mut high).enumerate() {
+                // Indexed over a constant trip count rather than
+                // `compose.iter_mut().zip(&mut high)`, for the same reason `quad` takes
+                // four parameters: the zip did not inline either. A release build left two
+                // `Zip::new` calls in this kernel, and an iterator LLVM cannot see through
+                // is an iterator it will not unroll, which is what made `compose` and
+                // `high` addressable. Four constant-index updates keep both in `zmm`.
+                for reg in 0..shuffle::WAYS {
                     // This register carries slices `4*reg ..= 4*reg+3`, whose bytes
                     // are therefore one stride apart from each other.
                     let at = 4 * reg * stride + step;
-                    let rows = quad(core::array::from_fn(|lane| {
-                        q.rows[usize::from(block[at + lane * stride])].as_ptr()
-                    }));
-                    *f = _mm512_shuffle_epi8(rows, *f);
-                    *h = _mm512_max_epu8(*h, *f);
+                    let row = |lane: usize| q.rows[usize::from(block[at + lane * stride])].as_ptr();
+                    let rows = quad(row(0), row(1), row(2), row(3));
+                    compose[reg] = _mm512_shuffle_epi8(rows, compose[reg]);
+                    high[reg] = _mm512_max_epu8(high[reg], compose[reg]);
                 }
             }
             // Collapse in slice order — lane 0 through lane 3, register by register —

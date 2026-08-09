@@ -208,8 +208,9 @@ pub const DORMANT: &[(Kernel, &str)] = &[
     (
         Kernel::Avx512,
         "differentiated under Intel SDE by `ci.yml`, which proves the kernel and prices \
-         nothing; `vpshufb` on `zmm` may cost frequency it cannot pay back, and only real \
-         silicon can say",
+         nothing; the first mint that reached real silicon read 0.335 ns/B against AVX2's \
+         0.290, but that was measured against a kernel spilling its four chains to the \
+         stack every step, so it prices nothing either and both have been re-run since",
     ),
     (
         Kernel::Avx2,

@@ -93,7 +93,18 @@ pub(crate) unsafe fn sweep_shuffle(q: &Quotient, hay: &[u8]) -> bool {
             let mut compose = [identity; shuffle::WAYS];
             let mut high = [identity; shuffle::WAYS];
             for step in 0..stride {
-                for (reg, (f, h)) in compose.iter_mut().zip(&mut high).enumerate() {
+                // Indexed over a constant trip count rather than
+                // `compose.iter_mut().zip(&mut high)`. The zip does not inline here — a
+                // release build left `Zip::new` calls in this kernel — and an iterator
+                // LLVM cannot see through is one it will not unroll, which makes both
+                // arrays *addressable*. That cost each of the four chains a `ymm` spill
+                // and reload every step, putting a store-to-load round trip on a
+                // recurrence whose whole job is to be a register dependency. Constant
+                // indices keep `compose` and `high` in registers.
+                //
+                // [`super::ssse3`] never showed the fault and needed no such change: one
+                // row per register is an indexed read LLVM already folds.
+                for reg in 0..shuffle::WAYS {
                     // This register carries slices `2*reg` and `2*reg+1`, whose bytes
                     // are therefore one stride apart.
                     let at = 2 * reg * stride + step;
@@ -101,8 +112,8 @@ pub(crate) unsafe fn sweep_shuffle(q: &Quotient, hay: &[u8]) -> bool {
                         q.rows[usize::from(block[at])].as_ptr(),
                         q.rows[usize::from(block[at + stride])].as_ptr(),
                     );
-                    *f = _mm256_shuffle_epi8(rows, *f);
-                    *h = _mm256_max_epu8(*h, *f);
+                    compose[reg] = _mm256_shuffle_epi8(rows, compose[reg]);
+                    high[reg] = _mm256_max_epu8(high[reg], compose[reg]);
                 }
             }
             // Collapse in slice order — low half before high half, register by
