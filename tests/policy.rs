@@ -47,30 +47,38 @@ fn an_unmeasured_machine_declines_instead_of_guessing() {
     for pattern in ARMING {
         match Sieve::with(pattern, &policy) {
             Err(BuildError::Uncalibrated { os, arch, kernel }) => {
+                // Checked against `price::OS` rather than `std::env::consts::OS`, which
+                // is not an oracle for this on every target the crate runs on: `std`
+                // reports the empty string under `wasi`, where the `cfg`-derived name is
+                // `"wasi"` and is the name a row would actually be keyed on. Holding the
+                // decline to `std` there asserts a machine must misname itself. Whether
+                // the enumerated arms are *spelled* the way `std` spells them is checked
+                // where it can be conditioned properly, in `price::calibration`'s
+                // `an_enumerated_os_is_spelled_the_way_the_standard_library_spells_it`.
                 assert_eq!(
                     os,
-                    std::env::consts::OS,
+                    sheng::price::OS,
                     "decline named the wrong operating system on {}",
-                    std::env::consts::ARCH
+                    sheng::price::ARCH
                 );
                 assert_eq!(
                     arch,
                     std::env::consts::ARCH,
                     "decline named the wrong architecture on {}",
-                    std::env::consts::OS
+                    sheng::price::OS
                 );
                 assert_eq!(
                     kernel,
                     sheng::shuffle::kernel(),
                     "decline named the wrong kernel on {}/{}",
-                    std::env::consts::OS,
-                    std::env::consts::ARCH
+                    sheng::price::OS,
+                    sheng::price::ARCH
                 );
             },
             other => panic!(
                 "{pattern:?} must decline on an unmeasured machine ({}/{}), got {other:?}",
-                std::env::consts::OS,
-                std::env::consts::ARCH
+                sheng::price::OS,
+                sheng::price::ARCH
             ),
         }
     }
