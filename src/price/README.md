@@ -8,7 +8,7 @@ and re-decide never touch each other's file.
 | ----------------- | ------------------------------------------------------------------------ |
 | `gate.rs`         | the worth-test arithmetic itself: `survival`, `CostFact`, `NOMINAL_LEN` — pure, no measured numbers |
 | `calibration.rs`  | the `Calibration` shape and its per-byte pricing methods, plus `active()` |
-| `minted.rs`       | nothing but the measured rows — `MACOS_AARCH64_NEON`, `LINUX_X86_64_SSSE3`, `UNMEASURED`, `MINTED` — and `DORMANT`, which names the kernels they do not price |
+| `minted.rs`       | nothing but the measured rows — ten of them, one per `(os, arch, kernel)` across all six native machines, plus `UNMEASURED` and `MINTED` — and `DORMANT`, which names the kernels they do not price |
 
 `mod.rs` carries the module's own doc (the scale-invariance argument, why nanoseconds
 rather than cycles) and re-exports every public name from all three files, so
@@ -28,8 +28,15 @@ with a deletion: `DORMANT` names the same kernel and its reason, and `minted.rs`
 own tests hold the two lists to each other in both directions.
 
 A row is keyed on `(os, arch, kernel)`, so it takes one run **per machine** — six, to
-cover what `.github/workflows/native.yml` proves correct. That column is not
-fastidiousness: with the key two columns wide, three of those six legs priced themselves
-from a fourth machine's row and `examples/survey.rs` caught every one of them arming a
-pattern that then lost. And among the rows a machine does have, dispatch picks the
-cheapest `sieve`, never the widest register — on x86_64 those are different kernels.
+cover what `.github/workflows/native.yml` proves correct, and all six have now been run.
+That column is not fastidiousness: with the key two columns wide, three of those six legs
+priced themselves from a fourth machine's row and `examples/survey.rs` caught every one of
+them arming a pattern that then lost. And among the rows a machine does have, dispatch
+picks the cheapest `sieve`, never the widest register — on x86_64 those are different
+kernels, and the widest is the slowest of three.
+
+Six runs is still not one row per machine in the world. `MACOS_AARCH64_NEON` is the row
+where that shows: its own mint leg and a 16-core Apple laptop disagree by enough that the
+runner's row arms a pattern the laptop then loses by 1.8x. Where one key covers machines
+that disagree, ship the row that overstates the engine's disadvantage least — an under-armed
+sieve costs a win nobody sees, an over-armed one ships a slowdown.

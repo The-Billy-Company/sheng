@@ -26,9 +26,9 @@ would make an unsafe shortcut here correct is exact agreement with the scalar
 specification it shortcuts.
 
 Which leaves one gap that test cannot close, because `kernel()` is deliberately
-conservative: it returns the fastest kernel `price::MINTED` holds a row for, so a kernel
-that compiles and runs but has not been minted is never what dispatch picks. The newest
-instruction set here is therefore the least likely to be the one under test.
+conservative: it returns the kernel `price::MINTED` prices *cheapest*, so a kernel that
+compiles and runs but has not been minted is never what dispatch picks — and neither is one
+that was minted and measured slower, which on x86_64 is the widest rung here.
 `tests/kernels.rs` and the `kernels` fuzz target close it from the other side, sweeping
 every entry `shuffle::available()` reports through the `shuffle::force` seam — which
 refuses any kernel this same runtime probe did not admit, so forcing can select an

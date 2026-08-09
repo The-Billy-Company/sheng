@@ -117,11 +117,14 @@ kind of report we want:
   relied on to reach them: `wasm32`'s SIMD128 under `wasmtime`, since a guest
   has no silicon at all, and AVX-512 under Intel SDE, since which x86_64 parts
   the runner fleet allocates is not something a workflow decides. Emulation is
-  allowed to prove a kernel correct and is never allowed to price one - neither
-  has a calibration row, and both are named in `price::DORMANT` for that reason;
-- a kernel dispatch would not have chosen is still differentiated, because
-  `arch::kernel` returns the fastest kernel `price::MINTED` holds a row for and
-  the newest instruction set is therefore the last one it reaches -
+  allowed to prove a kernel correct and is never allowed to price one, so neither
+  leg mints anything: SIMD128 has no row at all and is named in `price::DORMANT`
+  for that reason, while AVX-512's row came from a Windows runner that has the
+  silicon natively, not from the SDE leg that proves it;
+- a kernel dispatch would not have chosen is still differentiated, and dispatch
+  declining it is now the ordinary case rather than the new-instruction-set case:
+  `arch::kernel` elects the kernel `price::MINTED` prices *cheapest*, which on
+  x86_64 leaves the widest rung correct, present, measured and unelected -
   `tests/kernels.rs` and the `kernels` fuzz target both sweep
   `shuffle::available()` through the `shuffle::force` seam instead;
 - the set classifier is differentiated against a scalar statement of the same

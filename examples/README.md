@@ -48,7 +48,7 @@ Every block is stamped with the architecture, the kernel it was measured on, the
 host and the date — from `std` alone, no `uname` shell-out. A measured value with
 no machine beside it is an anecdote, and a price row measured through `pshufb` is
 not a price for a machine without it. Each row prints named for its
-(architecture, kernel) pair (`LINUX_X86_64_SSSE3`), because it belongs in
+(os, architecture, kernel) triple (`LINUX_X86_64_SSSE3`), because it belongs in
 `price::MINTED` rather than replacing a global default.
 
 One run prints a row per kernel the silicon can execute rather than one for the

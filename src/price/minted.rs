@@ -1,72 +1,171 @@
 //! The measured evidence: one [`Calibration`] row per (operating system, architecture,
 //! kernel) triple anybody has actually timed, plus the fail-safe row for everyone else.
+//!
+//! Every row here is minted by `cargo run --release --example mint` over a large slice of
+//! real source, each kernel timed alone as the minimum of several full traversals.
+//! `.github/workflows/mint.yml` is that run on real hardware, for each of the six machines
+//! `.github/workflows/native.yml` proves this crate correct on, and nine of the ten rows
+//! below came out of a single dispatch of it against one 60.6 MiB corpus. That they share a
+//! session matters for the reason four paragraphs down; the tenth is
+//! [`MACOS_AARCH64_NEON`], which says why it is the tenth.
+//!
+//! These numbers state the whole economics of this crate:
+//!
+//! * the sieve beats the engine's per-byte walk by several times — a real
+//!   advantage, and the reason any of this pays;
+//! * but the engine's *skip* is still an order of magnitude faster than the
+//!   sieve. Nothing that inspects every byte can front a `memchr`. That is not
+//!   a defect in the kernel; it is the arithmetic that decides where it belongs.
+//!
+//! `dfa_excursion` is solved from a slate of lead bytes spanning two orders of
+//! magnitude of frequency rather than assumed. Read at class resolution the
+//! inverted values disagree by about tenfold; read from a per-byte table they
+//! collapse into a narrow band — so that spread was the approximation talking,
+//! and closing it is what makes a single coefficient defensible here.
+//!
+//! The one-conjunct slot is unmeasured because the lattice harvest fills to
+//! [`MAX_CONJUNCTS`] whenever it yields anything at all, so no pattern on the mint's
+//! slate reaches it. [`Calibration::sieve_per_byte`] extrapolates it conservatively
+//! rather than treating the hole as free.
+//!
+//! The absolute per-byte figures — `dfa_skip`, `dfa_walk`, `sieve` — carry up to
+//! double-digit-percent run-to-run variance on a loaded machine, because `mint`
+//! times them unpaired. Because the gate is scale-invariant, that variance costs
+//! no decisions: a run under load inflates them together.
+//!
+//! A re-mint is a fresh complete measurement, not a splice of old and new
+//! afternoons: the gate reads *ratios* between these numbers, and a ratio built
+//! from two different sessions is not a measurement of anything. The exceptions are
+//! the two excursion coefficients, which are dimensionless and already
+//! self-normalized inside a single interleaved timing window — `mint`'s `paired`
+//! re-times both baselines against the pattern they divide, round by round — so
+//! they may be carried forward when the rest of the row is re-taken. The higher of
+//! consecutive paired mints is the one recorded, because an overstated excursion
+//! can only decline a skip.
+//!
+//! Which figures move is itself evidence, and worth trusting over any single run.
+//! Two independent mints of one machine, six days and one `regex-automata` removal
+//! apart, re-derived its memory-resident `dfa_excursion` to within a fraction of a
+//! percent while the unpaired figures beside it moved by several — the split falls
+//! exactly where `paired` is and is not used. So an excursion coefficient that looks
+//! like it drifted has almost certainly been read across machines or across regimes
+//! rather than across afternoons.
+//!
+//! Two coefficients carry a [`Residency`](super::Residency) index because a
+//! `memchr` and a dense-DFA re-entry are both cheaper once the bytes are already
+//! resident; `dfa_walk` and `sieve` do not, because a dependent-load walk and an
+//! issue-bound composition kernel have no headroom a hotter haystack could give
+//! them. `skip_excursion` is indexed for symmetry and is not expected to move —
+//! it re-enters sixteen blocks resident in either regime.
+//!
+//! # The mint can be fooled, and was
+//!
+//! A first residency mint read both columns identical, which looked like "residency
+//! does not matter on this silicon". It was not a finding: `mint` was aimed at a
+//! tree smaller than either requested working set, so both columns were the same
+//! bytes timed twice. `examples/mint.rs` now refuses a corpus too small to leave
+//! last-level cache rather than printing a row that says the memory system does
+//! not exist — a row is a claim about a memory system, and a mint that never
+//! reached memory has no business making one. The same trap makes a cache-resident
+//! re-mint look like the shipped memory-resident row went stale.
+//!
+//! # Seven of these ten rows carry no cache-resident column
+//!
+//! Which is `mint` declining to paste a number it does not believe, not a measurement
+//! nobody took. All six legs timed both regimes; on four of the six machines the
+//! cache-resident column came back *worse* than the memory-resident one — a `memchr`
+//! that got slower with the bytes already in cache, which describes a shared runner's
+//! scheduler rather than a memory system. `examples/mint.rs` recognizes that inversion
+//! and emits `0.0` across the whole column, which reads as unmeasured, so a caller
+//! declaring [`Residency::Cache`](super::Residency) on one of those machines is
+//! declined instead of being armed on the strength of noise. Two machines — `linux`
+//! x86_64 and `macos` aarch64 — returned a coherent pair, and they are the two whose
+//! rows have both.
 
 use super::calibration::{Calibration, REGIMES};
 use crate::lattice::MAX_CONJUNCTS;
 use crate::shuffle::Kernel;
 
-/// Minted by `cargo run --release --example mint` over a large slice of real
-/// source, each kernel timed alone as the minimum of several full traversals.
+/// The aarch64 Linux server, and one of the three machines whose survey failure bought the
+/// operating-system column: it had been arming on [`MACOS_AARCH64_NEON`]'s numbers and
+/// losing to real source text by 8%.
+pub const LINUX_AARCH64_NEON: Calibration = Calibration {
+    os: "linux",
+    arch: "aarch64",
+    kernel: Kernel::Neon,
+    host: "linux aarch64 · 4 logical cores · Neon kernel",
+    minted: "2026-08-09",
+    dfa_skip: [0.0, 0.036157],
+    dfa_walk: 1.601672,
+    dfa_excursion: [0.0, 11.407365],
+    skip_excursion: [[0.0, 8.589079], [0.0, 5.912553]],
+    sieve: [0.0, 0.399124],
+};
+
+/// The x86_64 Linux runner on its 32-byte shuffle — and, with [`LINUX_X86_64_SSSE3`] beside
+/// it, the cleanest comparison in this slice: two kernels timed on one machine in one
+/// session, which is the only arrangement where a difference between them is about the
+/// kernels at all.
 ///
-/// These numbers state the whole economics of this crate:
+/// AVX2 buys 11% of the sieve over SSSE3 (0.325 against 0.366 ns/B) while the engine walk
+/// each is weighed against differs by a tenth of a percent. Doubling the shuffle width does
+/// not halve the cost, because the kernel is load-bound rather than issue-bound. That it
+/// buys anything is what makes it worth dispatching to; that it buys 11% rather than 50% is
+/// why the decision had to be measured instead of assumed from the width.
+pub const LINUX_X86_64_AVX2: Calibration = Calibration {
+    os: "linux",
+    arch: "x86_64",
+    kernel: Kernel::Avx2,
+    host: "linux x86_64 · 4 logical cores · Avx2 kernel",
+    minted: "2026-08-09",
+    dfa_skip: [0.019787, 0.034197],
+    dfa_walk: 1.876710,
+    dfa_excursion: [11.667164, 12.118318],
+    skip_excursion: [[8.428401, 9.691899], [5.767844, 5.659967]],
+    sieve: [0.0, 0.325473],
+};
+
+/// The same machine's 16-byte shuffle, and one of the two rows in this slice that reached a
+/// coherent cache-resident regime. A row for the narrower kernel is not a fallback: it is
+/// what makes the comparison above a measurement rather than an assertion.
+pub const LINUX_X86_64_SSSE3: Calibration = Calibration {
+    os: "linux",
+    arch: "x86_64",
+    kernel: Kernel::Ssse3,
+    host: "linux x86_64 · 4 logical cores · Ssse3 kernel",
+    minted: "2026-08-09",
+    dfa_skip: [0.022706, 0.034235],
+    dfa_walk: 1.878684,
+    dfa_excursion: [11.675108, 12.158681],
+    skip_excursion: [[8.465241, 9.786254], [6.428453, 6.484189]],
+    sieve: [0.0, 0.366377],
+};
+
+/// Apple silicon — and the one row here **not** taken from the mint run that produced the
+/// other nine, because this key turned out to cover two machines that disagree.
 ///
-/// * the sieve beats the engine's per-byte walk by several times — a real
-///   advantage, and the reason any of this pays;
-/// * but the engine's *skip* is still an order of magnitude faster than the
-///   sieve. Nothing that inspects every byte can front a `memchr`. That is not
-///   a defect in the kernel; it is the arithmetic that decides where it belongs.
+/// `mint.yml`'s `macos-aarch64` leg priced its own runner in the same session as everything
+/// else: `dfa_excursion` 14.00, `skip_excursion` 10.18, sieve 0.285 ns/B. Those numbers are
+/// not wrong about that runner. They are wrong about a 16-core Apple laptop, and the
+/// difference is not subtle — pasted here, `examples/survey.rs` on one armed
+/// `(?-u)panic!\(` and measured it at **0.566x**, a sieve running 1.8x slower than the
+/// engine it displaced. The row below declines that same pattern at 1.089x.
 ///
-/// `dfa_excursion` is solved from a slate of lead bytes spanning two orders of
-/// magnitude of frequency rather than assumed. Read at class resolution the
-/// inverted values disagree by about tenfold; read from a per-byte table they
-/// collapse into a narrow band — so that spread was the approximation talking,
-/// and closing it is what makes a single coefficient defensible here.
+/// What separates them is one ratio. Every machine in that session read `skip_excursion`
+/// 20–30% under `dfa_excursion`; this machine reads them within 1%, which says its
+/// dense-DFA table stays resident where a 3-core runner's does not — a claim about a cache
+/// hierarchy, and exactly the kind of claim `(os, arch)` cannot key on. So the honest
+/// reading is not that one measurement is bad but that
+/// [`MINTED`]'s key is coarser than the fact, which it already says of itself.
 ///
-/// The one-conjunct slot is unmeasured because the lattice harvest fills to
-/// [`MAX_CONJUNCTS`] whenever it yields anything at all, so no pattern on the mint's
-/// slate reaches it. [`Calibration::sieve_per_byte`] extrapolates it conservatively
-/// rather than treating the hole as free.
-///
-/// The absolute per-byte figures — `dfa_skip`, `dfa_walk`, `sieve` — carry up to
-/// double-digit-percent run-to-run variance on a loaded machine, because `mint`
-/// times them unpaired. Because the gate is scale-invariant, that variance costs
-/// no decisions: a run under load inflates them together.
-///
-/// A re-mint is a fresh complete measurement, not a splice of old and new
-/// afternoons: the gate reads *ratios* between these numbers, and a ratio built
-/// from two different sessions is not a measurement of anything. The exceptions are
-/// the two excursion coefficients, which are dimensionless and already
-/// self-normalized inside a single interleaved timing window — `mint`'s `paired`
-/// re-times both baselines against the pattern they divide, round by round — so
-/// they may be carried forward when the rest of the row is re-taken. The higher of
-/// consecutive paired mints is the one recorded, because an overstated excursion
-/// can only decline a skip.
-///
-/// Which figures move is itself evidence, and worth trusting over any single run.
-/// Two independent mints six days and one `regex-automata` removal apart re-derived
-/// this row's memory-resident `dfa_excursion` to within a fraction of a percent,
-/// while the unpaired figures beside it moved by several — the split falls exactly
-/// where `paired` is and is not used. So an excursion coefficient that looks like
-/// it drifted has almost certainly been read across regimes rather than across
-/// afternoons; see below.
-///
-/// Two coefficients carry a [`Residency`](super::Residency) index because a
-/// `memchr` and a dense-DFA re-entry are both cheaper once the bytes are already
-/// resident; `dfa_walk` and `sieve` do not, because a dependent-load walk and an
-/// issue-bound composition kernel have no headroom a hotter haystack could give
-/// them. `skip_excursion` is indexed for symmetry and is not expected to move —
-/// it re-enters sixteen blocks resident in either regime.
-///
-/// # The mint can be fooled, and was
-///
-/// A first residency mint read both columns identical, which looked like "residency
-/// does not matter on this silicon". It was not a finding: `mint` was aimed at a
-/// tree smaller than either requested working set, so both columns were the same
-/// bytes timed twice. `examples/mint.rs` now refuses a corpus too small to leave
-/// last-level cache rather than printing a row that says the memory system does
-/// not exist — a row is a claim about a memory system, and a mint that never
-/// reached memory has no business making one. The same trap makes a cache-resident
-/// re-mint look like the shipped memory-resident row went stale.
+/// Given two rows for one key, the one that ships is the one that overstates the engine's
+/// disadvantage least. That is the same reasoning that makes `mint` record the *higher* of
+/// two paired excursions — an overstated excursion can only decline a skip — and the
+/// asymmetry behind it is not aesthetic: an under-armed sieve costs a win nobody sees,
+/// while an over-armed one ships a measured slowdown, which is the only one of the two
+/// `survey` is willing to call a failure. This row is also the one that describes the
+/// machines that exist in quantity; a 3-core virtualized runner is an artifact of CI, not a
+/// population. It is green on both machines, which the runner's row is not.
 pub const MACOS_AARCH64_NEON: Calibration = Calibration {
     os: "macos",
     arch: "aarch64",
@@ -80,31 +179,117 @@ pub const MACOS_AARCH64_NEON: Calibration = Calibration {
     sieve: [0.0, 0.196478],
 };
 
-/// Native x86_64 Linux, timed the same way as [`MACOS_AARCH64_NEON`].
+/// The Intel Mac, which is the machine that made the operating-system column unavoidable.
 ///
-/// With both rows on the composing kernel, they read as a comparison of silicon
-/// rather than of two different kernels. Absolute walk cost is nearly identical —
-/// a dependent-load chain either way — and relative skip/walk can even favor
-/// SSSE3; the sieve itself is where the architectures still disagree by a
-/// noticeable fraction. Inheriting one machine's numbers on the other would still
-/// misprice which patterns arm — which is the whole reason this crate keeps a row
-/// per (operating system, architecture, kernel) triple instead of one default.
-pub const LINUX_X86_64_SSSE3: Calibration = Calibration {
-    os: "linux",
+/// Same instruction set as [`LINUX_X86_64_AVX2`], and not the same economics: its AVX2
+/// sieve costs 0.527 ns/B where the Linux row it used to borrow reads 0.325 — a 62%
+/// understatement — against an engine walk that differs by under 2%. Arming on the
+/// difference between those two figures is exactly what `examples/survey.rs` caught losing.
+pub const MACOS_X86_64_AVX2: Calibration = Calibration {
+    os: "macos",
+    arch: "x86_64",
+    kernel: Kernel::Avx2,
+    host: "macos x86_64 · 4 logical cores · Avx2 kernel",
+    minted: "2026-08-09",
+    dfa_skip: [0.0, 0.081309],
+    dfa_walk: 1.910037,
+    dfa_excursion: [0.0, 13.262007],
+    skip_excursion: [[0.0, 10.880693], [0.0, 6.625020]],
+    sieve: [0.0, 0.527253],
+};
+
+/// The Intel Mac's 16-byte shuffle, and the widest kernel gap any machine here reports:
+/// 0.922 against AVX2's 0.527 ns/B, where the same two kernels on the Linux runner differ
+/// by 11%. The ratio between two kernels is a property of the machine too, which is the
+/// same finding one column over.
+pub const MACOS_X86_64_SSSE3: Calibration = Calibration {
+    os: "macos",
     arch: "x86_64",
     kernel: Kernel::Ssse3,
-    host: "linux x86_64 · 20 logical cores · Ssse3 kernel",
-    minted: "2026-08-03",
-    // Not yet timed in the cache-resident regime — this box is not here to run a mint
-    // on. Zero reads as unmeasured, so an `x86_64` caller declaring `Residency::Cache`
-    // gets `Uncalibrated` rather than these memory-resident numbers, which is the same
-    // refusal the crate makes about a machine it has never seen. `.github/workflows/mint.yml`
-    // is where the pair gets filled in.
-    dfa_skip: [0.0, 0.012845],
-    dfa_walk: 1.251617,
-    dfa_excursion: [0.0, 11.554774],
-    skip_excursion: [[0.0, 8.849832], [0.0, 7.255182]],
-    sieve: [0.0, 0.218482],
+    host: "macos x86_64 · 4 logical cores · Ssse3 kernel",
+    minted: "2026-08-09",
+    dfa_skip: [0.0, 0.084880],
+    dfa_walk: 2.136668,
+    dfa_excursion: [0.0, 13.655867],
+    skip_excursion: [[0.0, 12.677342], [0.0, 8.129890]],
+    sieve: [0.0, 0.921573],
+};
+
+/// Windows on arm64, priced within 2% of [`LINUX_AARCH64_NEON`] on near-identical silicon.
+/// Which is what the old two-column key predicted — and is a result rather than grounds for
+/// having assumed it, since the two x86_64 operating systems disagree by 62%.
+pub const WINDOWS_AARCH64_NEON: Calibration = Calibration {
+    os: "windows",
+    arch: "aarch64",
+    kernel: Kernel::Neon,
+    host: "windows aarch64 · 4 logical cores · Neon kernel",
+    minted: "2026-08-09",
+    dfa_skip: [0.0, 0.041957],
+    dfa_walk: 1.622228,
+    dfa_excursion: [0.0, 11.249269],
+    skip_excursion: [[0.0, 7.890919], [0.0, 5.752287]],
+    sieve: [0.0, 0.405517],
+};
+
+/// The first AVX-512 row this crate has ever had, and it prices the 64-byte kernel **slower
+/// than the 32-byte one**: 0.458 ns/B against [`WINDOWS_X86_64_AVX2`]'s 0.376, on one
+/// machine in one session, with the engine walk they are each weighed against differing by
+/// a tenth of a percent.
+///
+/// So it is a result and not an artifact of two sessions, and it is the row that earns
+/// [`crate::shuffle::kernel`] ranking by measured cost instead of by register width. Under
+/// the width prior this machine would have elected AVX-512 and run 22% slower than the rung
+/// beneath it, and no test in this crate would have objected, because AVX-512 is *correct*
+/// here — `ci.yml` proves that under Intel SDE on every run. Correct and slower is precisely
+/// the state a width prior cannot see.
+///
+/// Why it is slower is not settled, and this row does not need it to be. What has been ruled
+/// out is the first explanation: an earlier mint read 0.335 against AVX2's 0.290 while both
+/// kernels were spilling their four composition chains to the stack every step, so that
+/// comparison measured store-to-load forwarding rather than shuffle throughput. Unrolled
+/// into registers both got faster, and the ordering did not change.
+pub const WINDOWS_X86_64_AVX512: Calibration = Calibration {
+    os: "windows",
+    arch: "x86_64",
+    kernel: Kernel::Avx512,
+    host: "windows x86_64 · 4 logical cores · Avx512 kernel",
+    minted: "2026-08-09",
+    dfa_skip: [0.0, 0.077105],
+    dfa_walk: 1.753297,
+    dfa_excursion: [0.0, 12.018238],
+    skip_excursion: [[0.0, 8.701636], [0.0, 5.750183]],
+    sieve: [0.0, 0.458317],
+};
+
+/// The kernel that actually wins dispatch on that machine, by being the cheapest of the
+/// three it can run rather than the widest.
+pub const WINDOWS_X86_64_AVX2: Calibration = Calibration {
+    os: "windows",
+    arch: "x86_64",
+    kernel: Kernel::Avx2,
+    host: "windows x86_64 · 4 logical cores · Avx2 kernel",
+    minted: "2026-08-09",
+    dfa_skip: [0.0, 0.067181],
+    dfa_walk: 1.755121,
+    dfa_excursion: [0.0, 11.968558],
+    skip_excursion: [[0.0, 8.782805], [0.0, 6.404701]],
+    sieve: [0.0, 0.375878],
+};
+
+/// And the 16-byte rung beneath it, at 0.437 ns/B — still cheaper than the 64-byte one two
+/// rungs up, which is [`WINDOWS_X86_64_AVX512`]'s finding read from the other end of the
+/// ladder.
+pub const WINDOWS_X86_64_SSSE3: Calibration = Calibration {
+    os: "windows",
+    arch: "x86_64",
+    kernel: Kernel::Ssse3,
+    host: "windows x86_64 · 4 logical cores · Ssse3 kernel",
+    minted: "2026-08-09",
+    dfa_skip: [0.0, 0.069599],
+    dfa_walk: 1.753784,
+    dfa_excursion: [0.0, 12.136005],
+    skip_excursion: [[0.0, 8.962550], [0.0, 7.320876]],
+    sieve: [0.0, 0.436670],
 };
 
 /// The answer for a machine nobody has measured: **nothing is known**, so the sieve
@@ -147,10 +332,10 @@ pub const UNMEASURED: Calibration = Calibration {
 /// legs put three machines on a row minted on a fourth, and `examples/survey.rs` caught
 /// every one of the three arming a pattern that then lost against real source text —
 /// `macos` x86_64 by 3%, both `aarch64` servers by 8%. The mint says why: that macOS box
-/// times its own SSSE3 sieve at 0.54 ns/B where the Linux row it was borrowing claims
-/// 0.22, while the engine walk it is weighed against differs by only half that. A row is
-/// a claim about one machine's memory system, and the three legs that passed had been
-/// lucky in their silicon rather than vindicated by it.
+/// times its own AVX2 sieve at 0.527 ns/B where the Linux row it was borrowing reads 0.325,
+/// while the engine walk it is weighed against differs by under 2%. A row is a claim about
+/// one machine's memory system, and the three legs that passed had been lucky in their
+/// silicon rather than vindicated by it.
 ///
 /// (`os`, `architecture`) is not the *right* key — the right key is the machine, and two
 /// `aarch64` Linux servers can differ. It is the finest key a running binary can ask
@@ -182,7 +367,18 @@ pub const UNMEASURED: Calibration = Calibration {
 /// machine has by the `sieve` cost its own rows report, so the *order* of the entries
 /// here is presentation only — a slower kernel listed first cannot win a dispatch, and a
 /// faster one listed last cannot lose it.
-pub const MINTED: &[Calibration] = &[MACOS_AARCH64_NEON, LINUX_X86_64_SSSE3];
+pub const MINTED: &[Calibration] = &[
+    LINUX_AARCH64_NEON,
+    LINUX_X86_64_AVX2,
+    LINUX_X86_64_SSSE3,
+    MACOS_AARCH64_NEON,
+    MACOS_X86_64_AVX2,
+    MACOS_X86_64_SSSE3,
+    WINDOWS_AARCH64_NEON,
+    WINDOWS_X86_64_AVX512,
+    WINDOWS_X86_64_AVX2,
+    WINDOWS_X86_64_SSSE3,
+];
 
 /// Kernels this crate implements and some silicon can execute, that [`MINTED`] prices on
 /// no architecture — so [`crate::shuffle::kernel`] will not elect them anywhere.
@@ -204,25 +400,12 @@ pub const MINTED: &[Calibration] = &[MACOS_AARCH64_NEON, LINUX_X86_64_SSSE3];
 /// The test below holds this honest in both directions: a vector kernel this silicon can
 /// run must be either priced or named here, and a kernel named here must not turn out to
 /// be priced after all. So a mint that lands a row also has to delete its line.
-pub const DORMANT: &[(Kernel, &str)] = &[
-    (
-        Kernel::Avx512,
-        "differentiated under Intel SDE by `ci.yml`, which proves the kernel and prices \
-         nothing; the first mint that reached real silicon read 0.335 ns/B against AVX2's \
-         0.290, but that was measured against a kernel spilling its four chains to the \
-         stack every step, so it prices nothing either and both have been re-run since",
-    ),
-    (
-        Kernel::Avx2,
-        "awaiting the x86_64 leg of `.github/workflows/mint.yml`, which is the first mint \
-         this crate can run on real AVX2 silicon",
-    ),
-    (
-        Kernel::Simd128,
-        "a `wasm32` row's nanoseconds belong to the runtime and host under it, so the \
-         `mint` leg that prices one has to name both",
-    ),
-];
+pub const DORMANT: &[(Kernel, &str)] = &[(
+    Kernel::Simd128,
+    "the only kernel here no `mint` leg can reach: a `wasm32` row's nanoseconds belong to \
+     the runtime and the host under it, so the leg that prices one has to name both, and \
+     `ci.yml` runs that target under `wasmtime` to prove the kernel rather than to time it",
+)];
 
 #[cfg(test)]
 mod tests {

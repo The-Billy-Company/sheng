@@ -22,12 +22,16 @@ always took two. Measured in the emitted assembly of a real release build, per k
 spill stores 28 to 7, and the wide `vpshufb` count — the tell for whether the four-chain
 loop unrolled at all — from 2 to 8.
 
-This is why AVX-512 read as merely matching AVX2 rather than beating it, 0.335 against
-0.290 ns/B, despite consuming four times the bytes per step: not the register width, and
-not the 512-bit frequency penalty, but a hot loop that went through memory. `ssse3`, `neon`
-and `simd128` were never affected and are unchanged — one row per register is an indexed
-read LLVM already folds, which is exactly why the fault looked like a property of AVX-512
-instead of a property of how the loop was written.
+This was found while asking why AVX-512 measured *slower* than AVX2, 0.335 against
+0.290 ns/B, despite consuming four times the bytes per step — and it is worth recording that
+it turned out not to be the answer. Both kernels got faster once their chains stayed in
+registers, and the ordering between them did not change: re-minted on real silicon they read
+0.458 against 0.376 ns/B, the same ranking with a wider gap. So this is a fixed bug and a
+ruled-out hypothesis, not an explanation; what remains unexplained is left unexplained in
+`price::WINDOWS_X86_64_AVX512` rather than guessed at. `ssse3`, `neon` and `simd128` were
+never affected and are unchanged — one row per register is an indexed read LLVM already
+folds, which is exactly why the fault looked like a property of AVX-512 instead of a
+property of how the loop was written.
 
 Nothing about what these kernels compute has changed: same indices, same order, same
 operations, so `tests/kernels.rs` holds them to the scalar reference as before — on native

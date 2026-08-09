@@ -83,12 +83,15 @@ Which kernel a machine _runs_ is a narrower question than which it can execute,
 and deliberately so: dispatch elects the **cheapest kernel this machine's own
 calibration row measured**, so an unminted kernel is inert rather than trusted.
 Cheapest, not widest — a wider register is a guess about speed, and on x86_64 it
-is a guess a mint has already refuted, timing the AVX-512 composition pass at
-0.335 ns/B against AVX2's 0.290 on a runner whose `zmm` shuffles cost more
-frequency than they paid back. A kernel nobody has priced is named in
-[`price::DORMANT`][dormant] with the reason — a list whose entries are deleted by
+is a guess the mint has refuted. On the one runner offering all three rungs,
+AVX-512 costs 0.458 ns/B against AVX2's 0.376 and SSSE3's 0.437: the 64-byte
+shuffle is the slowest of the three, and it is perfectly correct, which is why a
+width prior cannot see it. It is priced and simply not elected there. A kernel
+nobody has priced anywhere is named in [`price::DORMANT`][dormant] with the
+reason — a list whose entries are deleted by
 [`.github/workflows/mint.yml`](.github/workflows/mint.yml) rather than by
-argument. See [Calibration](#calibration).
+argument, and which is down to `wasm32`'s SIMD128. See
+[Calibration](#calibration).
 
 `wasm32` is a seventh target and the one exception to the paragraph above, since
 a guest has no `CPUID` to probe: `-C target-feature=+simd128` chooses between the
@@ -428,11 +431,12 @@ four parallel slices, patterns that sit near the margin arm on both
 architectures together.
 
 `price::MINTED` holds one row per (os, architecture, kernel) triple measured so
-far. The `os` column is there because it was earned: keyed on the pair alone,
-three of the six native legs ran on a row minted on a fourth machine and were
-caught arming a pattern that then lost against real source text — macOS x86_64
-prices its own sieve at 0.54 ns/B where the Linux x86_64 row it was borrowing
-claims 0.22. Anything unmeasured declines, naming the missing measurement.
+far — ten of them, covering all six native machines. The `os` column is there
+because it was earned: keyed on the pair alone, three of the six native legs ran
+on a row minted on a fourth machine and were caught arming a pattern that then
+lost against real source text — macOS x86_64 prices its own AVX2 sieve at
+0.527 ns/B where the Linux x86_64 row it was borrowing reads 0.325. Anything
+unmeasured declines, naming the missing measurement.
 
 Four corpora are minted rather than one, because a byte prior is a claim about a
 corpus and shipping only source text priced everyone else's bytes under a model

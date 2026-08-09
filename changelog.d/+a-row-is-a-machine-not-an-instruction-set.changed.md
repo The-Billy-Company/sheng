@@ -6,9 +6,9 @@ ran on every push rather than only before a publish.
 Three of its six legs were pricing themselves from a row minted on a fourth machine, and
 `examples/survey.rs` caught every one of the three arming a pattern that then lost
 against real source text - macOS x86_64 by 3%, both `aarch64` servers by 8%. The mint says
-why: that macOS box times its own SSSE3 sieve at 0.54 ns/B where the Linux row it was
-borrowing claims 0.22, while the DFA walk the sieve is weighed against differs by only
-half as much, so the ratio that decides arming moves with the machine. The instruction
+why: that macOS box times its own AVX2 sieve at 0.527 ns/B where the Linux row it was
+borrowing reads 0.325, while the DFA walk the sieve is weighed against differs by under
+2%, so the ratio that decides arming moves with the machine. The instruction
 set fixes what the kernel *is*; the cache hierarchy fixes what it costs against its
 rival. The three legs that passed had been lucky in their silicon rather than vindicated
 by it.
