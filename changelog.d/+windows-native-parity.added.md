@@ -8,9 +8,8 @@ They now are. `.github/workflows/native.yml` runs the full soundness differentia
 the kernel-agreement census, and the `survey` economic gate on real native silicon
 across all six Windows/Linux/macOS × x86_64/arm64 targets on every push - never
 emulated, never cross-compiled - and gates `cargo publish` on all six passing
-uncached. `price::MINTED` keeps the same two rows it always had, keyed by
-`(architecture, kernel)` rather than by operating system, because that is exactly
-the claim the new matrix exists to keep proving rather than assume: a target absent
-from it still declines with `BuildError::Uncalibrated` instead of inheriting another
-platform's numbers, and an `os` field is warranted the day some target's own
-measurement disagrees, not before.
+uncached. The matrix exists to keep proving that a row's numbers hold on the machine
+running them rather than to assume it, and it collected inside this same release: the
+six cells disagreed, so `price::MINTED` is now keyed by `(os, architecture, kernel)`
+and carries ten rows rather than two. A target still absent from the matrix declines
+with `BuildError::Uncalibrated` instead of inheriting another platform's numbers.
