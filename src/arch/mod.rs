@@ -510,7 +510,18 @@ mod x86 {
     /// it, and `core` therefore exposes it as a safe function on this target. Leaf 0
     /// reports the highest leaf that exists and is always readable, so no later leaf is
     /// queried until leaf 0 has said it is there.
+    ///
+    /// Which is also why this is the only place Miri has to be told about. Miri does not
+    /// implement `CPUID` and aborts on it, and that abort is not a finding about this
+    /// crate: an interpreter that cannot execute the probe cannot execute the kernels the
+    /// probe would admit either. Zero is the honest answer under it — no leaf past 0 is
+    /// readable — and because every caller above gates its own `__cpuid` behind a
+    /// `leaves()` comparison, one `cfg` here disarms the whole probe rather than three,
+    /// leaving `available` reporting the scalar path `miri.yml` is named for.
     fn leaves() -> u32 {
+        if cfg!(miri) {
+            return 0;
+        }
         __cpuid(0).eax
     }
 

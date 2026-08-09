@@ -111,10 +111,12 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          # The App token is used only by the explicit git push below.
-          # Do not leave it behind for a later step to upload in an artifact.
+          # The App token is used only by the explicit git push below, which carries it
+          # in a one-off remote URL. Do not leave it behind in `.git/config` for a later
+          # step to upload in an artifact — which is also why no `token:` is passed here:
+          # with credentials unpersisted the input authenticates nothing, and reading it
+          # as if it did is what left this job committing a fold it could not push.
           persist-credentials: false
-          token: ${{ steps.app-token.outputs.token }}
           ref: ${{ fromJson(needs.release-please.outputs.pr).headBranchName }}
 
       - id: version
@@ -128,6 +130,12 @@ jobs:
           enable-cache: false
 
       - name: Fold changelog.d fragments into CHANGELOG.md at this PR's version
+        env:
+          # Read through the environment rather than interpolated into the script: the
+          # token so it is never a substring of a command line, the branch because it is
+          # PR-supplied text and this is a shell.
+          RELEASE_TOKEN: ${{ steps.app-token.outputs.token }}
+          HEAD_BRANCH: ${{ fromJson(needs.release-please.outputs.pr).headBranchName }}
         run: |
           set -euo pipefail
           version=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])' \
@@ -151,4 +159,5 @@ jobs:
           git config user.email 'billy-company-release[bot]@users.noreply.github.com'
           git add CHANGELOG.md changelog.d Cargo.lock
           git commit -m "chore(changelog): fold fragments and lock v$version"
-          git push origin "HEAD:${{ fromJson(needs.release-please.outputs.pr).headBranchName }}"
+          git push "https://x-access-token:${RELEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:${HEAD_BRANCH}"
