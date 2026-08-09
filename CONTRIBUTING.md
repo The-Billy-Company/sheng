@@ -103,9 +103,12 @@ and WASM SIMD128, which live one file per instruction set in `src/arch/`. New
    unrecoverable bug in this crate.
 
 A whole new kernel carries a fourth, and it is the one that surprises people: it
-will not run. `arch::kernel` returns the fastest kernel `price::MINTED` holds a
-row for, so a kernel with no row is inert by construction rather than by
-oversight - running it would price arming with some other kernel's nanoseconds.
+will not run. `arch::kernel` returns the kernel whose row this machine prices
+_cheapest_ - not the widest one its silicon offers, since x86_64 has already
+measured those to be different kernels - so a kernel with no row is inert by
+construction rather than by oversight, and a kernel that is merely wide cannot
+displace a faster one. Running an unpriced kernel would price arming with some
+other kernel's nanoseconds.
 Dispatch wakes it only once somebody runs `.github/workflows/mint.yml` on that
 hardware and pastes the rows in. Until then `tests/kernels.rs`, the `kernels`
 fuzz target, and `shuffle::force` are what exercise it.
@@ -176,15 +179,21 @@ spellings of the same bug.
 
 ## Calibration Is Per Machine, Not Per Contributor
 
-`price::MINTED` holds one row per (architecture, kernel) pair somebody has
+`price::MINTED` holds one row per (os, architecture, kernel) triple somebody has
 measured, and a machine with no row declines every pattern rather than
 inheriting another machine's silicon. That refusal is correct, so do not add a
-row by copying a neighboring one.
+row by copying a neighboring one - and "neighboring" now includes the same
+architecture under a different OS, which is the copy that actually happened:
+three of the six `native.yml` legs ran on a fourth machine's row and every one
+of them was caught arming a pattern that then lost.
 
 To add yours, run `cargo run --release --example mint` on an idle machine and
 paste what it emits. Every constant it prints carries the machine, the kernel,
 and the date that produced it; a measured value with no machine beside it is an
-anecdote.
+anecdote. Note what the mint does when it cannot measure a regime honestly: if a
+busy machine times a cache-resident haystack as costing the engine _more_ than a
+memory-resident one, it withholds that whole column as `0.0` rather than printing
+a number for you to remember to zero.
 
 ## Licensing
 

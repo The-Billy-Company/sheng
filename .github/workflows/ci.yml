@@ -177,9 +177,17 @@ jobs:
           # Nothing here pushes with the checkout credential, and leaving it in
           # .git/config is how it ends up inside an uploaded artifact.
           persist-credentials: false
+      # The pin is read out of `rust-toolchain.toml` rather than asked for as `stable`,
+      # because a job that installs *targets* is the one place the difference bites:
+      # rustup honors the file over whatever the action made default, so `stable` here
+      # would install `aarch64-unknown-none` for a toolchain nothing then runs, and the
+      # 1.96.0 that actually compiles would have no `core` for it. Same derive-it-once
+      # shape as the `msrv` job above, pointed at the other pin.
+      - id: pin
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
-          toolchain: stable
+          toolchain: ${{ steps.pin.outputs.channel }}
           targets: aarch64-unknown-none,x86_64-unknown-none
           components: clippy
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
@@ -239,9 +247,14 @@ jobs:
           # Nothing here pushes with the checkout credential, and leaving it in
           # .git/config is how it ends up inside an uploaded artifact.
           persist-credentials: false
+      # Read out of `rust-toolchain.toml` for the reason the `no_std` leg spells out: the
+      # file outranks the action's default, so targets asked for under `stable` would be
+      # installed for a toolchain that never compiles anything here.
+      - id: pin
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
-          toolchain: stable
+          toolchain: ${{ steps.pin.outputs.channel }}
           targets: wasm32-wasip1,wasm32-unknown-unknown
           components: clippy
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1

@@ -80,10 +80,12 @@ on real, never-emulated silicon on every push, and re-checks the economic gate
 against real source text.
 
 Which kernel a machine _runs_ is a narrower question than which it can execute,
-and deliberately so: dispatch elects the widest kernel a calibration row was
-measured on, so an unminted kernel is inert rather than trusted. Today that
-leaves SSSE3 the widest x86_64 rung in service, with the two above it
-implemented, differentially tested on real silicon, and named in
+and deliberately so: dispatch elects the **cheapest kernel this machine's own
+calibration row measured**, so an unminted kernel is inert rather than trusted.
+Cheapest, not widest — a wider register is a guess about speed, and on x86_64 it
+is a guess a mint has already refuted, timing the AVX-512 composition pass at
+0.335 ns/B against AVX2's 0.290 on a runner whose `zmm` shuffles cost more
+frequency than they paid back. A kernel nobody has priced is named in
 [`price::DORMANT`][dormant] with the reason — a list whose entries are deleted by
 [`.github/workflows/mint.yml`](.github/workflows/mint.yml) rather than by
 argument. See [Calibration](#calibration).
@@ -425,10 +427,12 @@ walk cost is nearly identical across the shipped rows. After `shuffle` moved to
 four parallel slices, patterns that sit near the margin arm on both
 architectures together.
 
-`price::MINTED` holds one row per (architecture, kernel) pair measured so far,
-keyed deliberately without `os` — Windows shares the arch rows, since nothing
-upstream varies by it. Anything unmeasured declines, naming the missing
-measurement.
+`price::MINTED` holds one row per (os, architecture, kernel) triple measured so
+far. The `os` column is there because it was earned: keyed on the pair alone,
+three of the six native legs ran on a row minted on a fourth machine and were
+caught arming a pattern that then lost against real source text — macOS x86_64
+prices its own sieve at 0.54 ns/B where the Linux x86_64 row it was borrowing
+claims 0.22. Anything unmeasured declines, naming the missing measurement.
 
 Four corpora are minted rather than one, because a byte prior is a claim about a
 corpus and shipping only source text priced everyone else's bytes under a model

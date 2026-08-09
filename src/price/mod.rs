@@ -39,13 +39,20 @@
 //! `scaling_the_whole_calibration_changes_no_decision`, a test rather than a claim.
 //!
 //! What survives the scaling is three **dimensionless ratios**: skip-to-walk,
-//! sieve-to-walk, and the excursion multiplier. Those are properties of an
-//! instruction set — how fast `memchr` runs against a dependent-load DFA walk against
-//! a 16-lane byte shuffle — not of a serial number. They are what a re-mint on new
-//! silicon is actually re-measuring, and [`MINTED`] holds one row per
-//! (architecture, kernel) pair anybody has measured.
+//! sieve-to-walk, and the excursion multiplier. Those are what a re-mint on new silicon
+//! is actually re-measuring, and [`MINTED`] holds one row per (operating system,
+//! architecture, kernel) triple anybody has measured.
 //!
-//! A pair nobody has measured gets [`UNMEASURED`], whose sieve price is infinite, so
+//! Scale invariance is what frees a row from a *clock*. It does not free one from a
+//! *machine*, and this module used to claim otherwise — that the ratios were a property
+//! of an instruction set rather than of a serial number. Measurement disagreed: two
+//! `x86_64` boxes running the identical SSSE3 kernel price the sieve at 0.22 and
+//! 0.54 ns/B, and because the DFA walk they are weighed against differs by only half as
+//! much, the ratio that decides arming moves with them. The instruction set fixes what
+//! the kernel *is*; the cache hierarchy fixes what it costs against its rival. Hence the
+//! machine in the key — see [`OS`].
+//!
+//! A triple nobody has measured gets [`UNMEASURED`], whose sieve price is infinite, so
 //! an unknown machine declines every pattern instead of trusting another machine's
 //! numbers. The hazard that makes this fail-closed rather than fussy: the `sieve`
 //! coefficients are timed **with a byte shuffle**, and a target without one runs
@@ -72,3 +79,6 @@ pub use minted::{DORMANT, LINUX_X86_64_SSSE3, MACOS_AARCH64_NEON, MINTED, UNMEAS
 /// The architecture string [`MINTED`] keys its rows on, and the one a fresh row
 /// must name. See [`crate::arch::ARCH`].
 pub use crate::arch::ARCH;
+/// The operating-system string [`MINTED`] keys its rows on — the other half of the
+/// machine half of the key, and the one a fresh row must name. See [`crate::arch::OS`].
+pub use crate::arch::OS;

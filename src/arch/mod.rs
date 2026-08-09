@@ -12,8 +12,9 @@
 //!
 //! # The crate does not run a kernel it has not priced
 //!
-//! [`available`] reports every kernel the silicon can execute, fastest first;
-//! [`kernel`] returns the fastest one `price::MINTED` holds a row for. That rule is
+//! [`available`] reports every kernel the silicon can execute, widest first;
+//! [`kernel`] returns whichever of those `price::MINTED` prices *cheapest* on this
+//! machine — measured, because width turned out not to predict speed. That rule is
 //! what lets a new instruction set land without a flag day: an unpriced kernel is
 //! simply not selected, so adding [`avx2`] cannot move a single arming decision until
 //! somebody mints it, and cannot strand an x86_64 machine on
@@ -133,6 +134,61 @@ pub const ARCH: &str = if cfg!(target_arch = "aarch64") {
     "unknown"
 };
 
+/// The running target's operating system, spelled exactly as `std::env::consts::OS`
+/// spells it — the third of the three columns [`crate::price::MINTED`] keys a row on.
+///
+/// Read from `cfg` for the same reason [`ARCH`] is: a `no_std` target has to be able to
+/// answer.
+///
+/// # Why an operating system belongs in a key about silicon
+///
+/// It does not, quite, and the honest reading of this column is that it is a *proxy*.
+/// A calibration row is a claim about one machine's memory system and one kernel's
+/// throughput on it, and the finest key a running binary can actually ask about itself
+/// is the pair (`target_os`, `target_arch`). Two `aarch64` machines can be a laptop's
+/// M-series and a datacenter Ampere with a quite different last-level cache, and
+/// nothing in `cfg` distinguishes them — but in practice the fleet lands one per
+/// operating system, so this column separates them.
+///
+/// It was added because a measurement demanded it, not to be thorough. With rows keyed
+/// on (architecture, kernel) alone, `.github/workflows/native.yml`'s six legs put three
+/// machines on a row minted on a fourth, and `examples/survey.rs` caught all three
+/// arming a pattern that then lost against real source text — `macos` x86_64 measured
+/// its own sieve at 0.54 ns/B where the Linux row it was borrowing claimed 0.22. That
+/// is the evidence [`crate::price::MINTED`] said would be required before this column
+/// existed, and the three legs that passed had merely been lucky in their silicon.
+///
+/// # Only what this repository builds is enumerated
+///
+/// [`ARCH`] lists every architecture that *could* run a byte-shuffle kernel, because
+/// that list decides whether a kernel can be described at all. This one is shorter, and
+/// the criterion is different: an operating system's only job here is to key a row, and
+/// an OS with no row is the `"unknown"` case already — it matches nothing, resolves to
+/// [`UNMEASURED`](crate::price::UNMEASURED), and declines every pattern. An `android`
+/// arm would therefore be indistinguishable from the fallback in every observable way
+/// while implying a readiness nobody has measured, so these five are the targets CI
+/// actually builds and nothing else: three that a mint leg runs on, `wasi` for the
+/// `wasm32` leg that executes the SIMD128 kernel under wasmtime, and `none` for the two
+/// bare-metal targets, which report [`Kernel::Scalar`] and mean it. Note that
+/// `wasm32-unknown-unknown` spells its own `target_os` `"unknown"`, so for that target
+/// the fallback below is not a fallback but the correct name.
+///
+/// Adding an arm is what a mint on that operating system does, in the same motion as
+/// adding its row.
+pub const OS: &str = if cfg!(target_os = "linux") {
+    "linux"
+} else if cfg!(target_os = "macos") {
+    "macos"
+} else if cfg!(target_os = "windows") {
+    "windows"
+} else if cfg!(target_os = "wasi") {
+    "wasi"
+} else if cfg!(target_os = "none") {
+    "none"
+} else {
+    "unknown"
+};
+
 /// Which byte-shuffle instruction set backs the sieve on this target.
 ///
 /// Reported rather than assumed, for two reasons that are both about not lying.
@@ -204,8 +260,17 @@ impl Kernel {
     ];
 }
 
-/// Every kernel this silicon can actually execute, **fastest first** and always ending
+/// Every kernel this silicon can actually execute, **widest first** and always ending
 /// in [`Kernel::Scalar`], which every target can run.
+///
+/// Widest, not fastest, and the distinction is load-bearing. This order is a *prior* —
+/// register width is a guess about throughput, and on x86_64 it is a guess that has now
+/// been measured wrong: a 4-core Linux runner timed the AVX-512 composition kernel at
+/// 0.335 ns/B against AVX2's 0.290, because a `zmm` shuffle can hold the core at a
+/// lower frequency for the rest of the document and no per-byte instruction count can
+/// see that. So [`kernel`] ranks the priced rungs by what
+/// [`crate::price::MINTED`] measured and consults this order only to break a tie and to
+/// answer at all on a machine nothing has priced.
 ///
 /// Public because it is what `examples/mint.rs` iterates: one mint run on a machine
 /// should price every kernel that machine has, not only the one it would have
@@ -253,11 +318,19 @@ static RESOLVED: AtomicU8 = AtomicU8::new(0);
 
 /// Which kernel every dispatch point in this crate will actually run here.
 ///
-/// The fastest kernel that is **both** executable on this silicon and priced by
-/// [`crate::price::MINTED`] for this [`ARCH`]. Decided once and read by every dispatch
-/// point, so what runs and what the crate reports are always the same decision.
+/// The **cheapest measured** kernel this silicon can execute: of the rungs
+/// [`crate::price::MINTED`] holds a row for on this ([`OS`], [`ARCH`]) machine, the one
+/// whose row prices the composition pass lowest. Decided once and read by every
+/// dispatch point, so what runs and what the crate reports are always the same
+/// decision.
 ///
-/// When nothing here is priced at all the answer is the fastest available kernel
+/// Measured rather than widest, because those are not the same kernel. The rung
+/// [`available`] puts first is the widest one, and a machine is allowed to say that its
+/// widest rung is slower — x86_64 already does. A dispatch that trusted the width order
+/// would elect a kernel this machine's own mint timed as a loss, which is the one
+/// mistake a calibration exists to prevent.
+///
+/// When nothing here is priced at all the answer is the widest available kernel
 /// rather than [`Kernel::Scalar`], and the asymmetry is deliberate: an unpriced
 /// machine resolves to [`UNMEASURED`](crate::price::UNMEASURED) and declines every
 /// pattern, so there is no arming decision left to protect — and the callers who
@@ -269,21 +342,35 @@ pub fn kernel() -> Kernel {
         return known;
     }
     let ladder = available();
+    // The cheapest *measured* rung, with `available`'s width order left to break ties
+    // and to answer on a machine nothing has priced. `min_by` keeps the earliest of
+    // equal costs, so a tie still resolves the way the prior would have.
     let resolved = ladder
         .iter()
         .copied()
-        .find(|&kernel| priced(kernel))
-        .unwrap_or(ladder[0]);
+        .filter_map(|kernel| price(kernel).map(|cost| (kernel, cost)))
+        .min_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map_or(ladder[0], |(kernel, _)| kernel);
     RESOLVED.store(resolved.code(), Ordering::Relaxed);
     resolved
 }
 
-/// Has anybody timed this (architecture, kernel) pair? The question [`kernel`] asks
-/// before it will dispatch to something.
-fn priced(kernel: Kernel) -> bool {
+/// What this machine's own row says this kernel's composition pass costs per byte, or
+/// `None` if nobody has timed this (operating system, architecture, kernel) triple.
+///
+/// The comparable figure is the sieve's own per-byte cost, and it is the right one to
+/// rank by for a reason worth stating: it is the only coefficient in a row that
+/// describes *this kernel* rather than the engine it is being weighed against. The
+/// `dfa_*` terms are properties of `regex-automata` on this silicon and come out within
+/// a few percent across every kernel on one machine — ranking by them would be ranking
+/// noise. It is also residency-independent ([`crate::price::Calibration`]), which
+/// matters because this answer is memoized once per process while the regime is a
+/// per-call argument.
+fn price(kernel: Kernel) -> Option<f64> {
     crate::price::MINTED
         .iter()
-        .any(|cal| cal.arch == ARCH && cal.kernel == kernel)
+        .find(|cal| cal.os == OS && cal.arch == ARCH && cal.kernel == kernel)
+        .map(|cal| cal.sieve_per_byte(crate::lattice::MAX_CONJUNCTS))
 }
 
 /// Run every dispatch point in this crate as if `kernel` were what [`kernel`]

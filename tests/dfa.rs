@@ -281,7 +281,8 @@ fn a_callers_automaton_is_gated_like_any_other() {
         ..Policy::new(Residency::Memory)
     };
     match Sieve::of_dfa_with(&dfa, &unmeasured) {
-        Err(sheng::BuildError::Uncalibrated { arch, kernel }) => {
+        Err(sheng::BuildError::Uncalibrated { os, arch, kernel }) => {
+            assert_eq!(os, sheng::price::OS);
             assert_eq!(arch, sheng::price::ARCH);
             assert_eq!(kernel, sheng::shuffle::kernel());
         },

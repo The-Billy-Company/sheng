@@ -3,7 +3,7 @@
 //! [`super::minted`].
 
 use super::minted::{MINTED, UNMEASURED};
-use crate::arch::ARCH;
+use crate::arch::{ARCH, OS};
 use crate::lattice::MAX_CONJUNCTS;
 use crate::shuffle::{self, Kernel};
 use crate::skip::Skip;
@@ -80,11 +80,19 @@ impl Residency {
 ///   `memchr` saturates, so it has no headroom to gain from a hotter haystack.
 ///
 /// Keeping them in one row rather than shipping two rows per machine is deliberate.
-/// A row is a claim about an (architecture, kernel) pair, and the invariance above is
+/// A row is a claim about an (operating system, architecture, kernel) triple, and the
+/// invariance above is
 /// then a structural fact the type enforces instead of a coincidence two independently
 /// pasted rows would have to be trusted to preserve.
 #[derive(Debug, Clone, Copy)]
 pub struct Calibration {
+    /// The operating system these ratios were measured under, spelled as [`OS`] spells
+    /// it so [`active`] can match it against the running target.
+    ///
+    /// Part of the key because a row is a claim about *one machine*, and (`os`, `arch`)
+    /// is the finest description of a machine a running binary can ask about itself —
+    /// see [`OS`] for the measurement that forced this column into existence.
+    pub os: &'static str,
     /// The instruction set these ratios describe, spelled as [`ARCH`] spells it so
     /// [`active`] can match it against the running target.
     pub arch: &'static str,
@@ -145,10 +153,12 @@ pub struct Calibration {
 
 /// The calibration for the machine that is running, or [`UNMEASURED`].
 ///
-/// Keyed on the architecture **and** the kernel that dispatch actually chose, because
-/// an `x86_64` without SSSE3 runs the scalar path and has no business inheriting a
-/// `pshufb` measurement. Resolved at run time rather than by `cfg` for the same
-/// reason: the kernel is a runtime probe on x86, so a compile-time answer could be
+/// Keyed on the operating system, the architecture, **and** the kernel that dispatch
+/// actually chose. The kernel is in the key because an `x86_64` without SSSE3 runs the
+/// scalar path and has no business inheriting a `pshufb` measurement; the operating
+/// system is in it because a row describes one machine's memory system and a borrowed
+/// row mis-arms — see [`OS`]. Resolved at run time rather than by `cfg` for the same
+/// reason the kernel is: it is a runtime probe on x86, so a compile-time answer could be
 /// wrong on the machine that ends up executing.
 ///
 /// `residency` is **not** part of that key, and the asymmetry is the point. Which
@@ -164,7 +174,9 @@ pub fn active(residency: Residency) -> Calibration {
     MINTED
         .iter()
         .copied()
-        .find(|cal| cal.arch == ARCH && cal.kernel == kernel && cal.is_measured(residency))
+        .find(|cal| {
+            cal.os == OS && cal.arch == ARCH && cal.kernel == kernel && cal.is_measured(residency)
+        })
         .unwrap_or(UNMEASURED)
 }
 
@@ -400,18 +412,22 @@ mod tests {
     }
 
     /// On the machine running the suite, resolution must either find a row minted for
-    /// exactly this (architecture, kernel) pair or fall through to the unmeasured one.
-    /// Inheriting a foreign row is the failure this pins shut.
+    /// exactly this (os, architecture, kernel) triple or fall through to the unmeasured
+    /// one. Inheriting a foreign row is the failure this pins shut — and the reason the
+    /// operating system is in the triple is that this assertion used to be written
+    /// without it, so a macOS x86_64 host inheriting a Linux x86_64 row read as a match.
     #[test]
     fn resolution_matches_this_machine_or_admits_it_cannot() {
         for at in REGIME {
             let cal = active(at);
             if cal.is_measured(at) {
+                assert_eq!(cal.os, OS);
                 assert_eq!(cal.arch, ARCH);
                 assert_eq!(cal.kernel, crate::shuffle::kernel());
             } else {
                 assert!(
-                    !MINTED.iter().any(|c| c.arch == ARCH
+                    !MINTED.iter().any(|c| c.os == OS
+                        && c.arch == ARCH
                         && c.kernel == crate::shuffle::kernel()
                         && c.is_measured(at)),
                     "a row exists for this machine in {at:?} but resolution missed it"
@@ -428,6 +444,20 @@ mod tests {
     #[test]
     fn the_cfg_derived_arch_is_the_one_the_standard_library_reports() {
         assert_eq!(ARCH, std::env::consts::ARCH);
+    }
+
+    /// The same guard for [`OS`], and it needs one more badly than [`ARCH`] does: this
+    /// column is deliberately *not* exhaustive — an operating system nobody has minted on
+    /// is meant to read `"unknown"` — so the failure mode is not a typo resolving to
+    /// nothing, it is a typo in one of the five enumerated arms silently reading as the
+    /// catch-all and disarming a machine that does have a row.
+    #[cfg(feature = "std")]
+    #[test]
+    fn an_enumerated_os_is_spelled_the_way_the_standard_library_spells_it() {
+        // A host running the test suite is by definition one of the enumerated five, so
+        // the catch-all here would mean the arm for this machine is misspelled.
+        assert_ne!(OS, "unknown", "this host should be enumerated in `OS`");
+        assert_eq!(OS, std::env::consts::OS);
     }
 
     #[test]

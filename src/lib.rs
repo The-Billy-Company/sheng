@@ -421,6 +421,7 @@ impl Sieve {
         // be talked into a speedup by a well-shaped automaton.
         if policy.gate == Gate::Worth && !policy.calibration.is_measured(policy.residency) {
             return Err(BuildError::Uncalibrated {
+                os: price::OS,
                 arch: price::ARCH,
                 kernel: shuffle::kernel(),
             });

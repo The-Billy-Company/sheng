@@ -15,7 +15,10 @@
 #    the PR branch; it re-runs on every push to main while the PR stays open,
 #    so the fold never falls behind whatever fragments are on the branch when
 #    someone finally merges. `release.yml`'s preflight re-checks the fold
-#    landed before it will publish anything.
+#    landed before it will publish anything. That job also re-locks `Cargo.lock`,
+#    which mirrors this crate's version but cannot carry a marker for the generic
+#    updater to find — a lock left a version behind fails every `--locked` job on
+#    the PR before it compiles anything.
 #
 # 2. This runs as a GitHub App, not as Actions, and it has to. Two independent
 #    walls make the default GITHUB_TOKEN useless here: the enterprise forbids the
@@ -131,12 +134,21 @@ jobs:
             <<<'${{ steps.version.outputs.result }}')
           uv run --no-project --python 3.12 --with towncrier==25.8.0 \
             towncrier build --yes --version "$version"
-          if git diff --quiet -- CHANGELOG.md changelog.d; then
+          # `Cargo.lock` carries this crate's own version too, and release-please's
+          # generic updater only rewrites the marked line in `Cargo.toml`. Until the
+          # lock agrees, every `--locked` job on this PR fails before it compiles a
+          # line — which is every Cargo job in ci.yml, so the release PR would sit
+          # permanently red on a bump that broke nothing. `--workspace` moves the
+          # members' own entries and nothing else, so no dependency can ride in on a
+          # release commit. rustup resolves 1.96.0 from `rust-toolchain.toml` here the
+          # same way every other job gets it.
+          cargo update --workspace
+          if git diff --quiet -- CHANGELOG.md changelog.d Cargo.lock; then
             echo "nothing new to fold at $version"
             exit 0
           fi
           git config user.name 'billy-company-release[bot]'
           git config user.email 'billy-company-release[bot]@users.noreply.github.com'
-          git add CHANGELOG.md changelog.d
-          git commit -m "chore(changelog): fold fragments for v$version"
+          git add CHANGELOG.md changelog.d Cargo.lock
+          git commit -m "chore(changelog): fold fragments and lock v$version"
           git push origin "HEAD:${{ fromJson(needs.release-please.outputs.pr).headBranchName }}"

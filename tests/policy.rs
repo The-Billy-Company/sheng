@@ -46,7 +46,13 @@ fn an_unmeasured_machine_declines_instead_of_guessing() {
     let policy = with(UNMEASURED);
     for pattern in ARMING {
         match Sieve::with(pattern, &policy) {
-            Err(BuildError::Uncalibrated { arch, kernel }) => {
+            Err(BuildError::Uncalibrated { os, arch, kernel }) => {
+                assert_eq!(
+                    os,
+                    std::env::consts::OS,
+                    "decline named the wrong operating system on {}",
+                    std::env::consts::ARCH
+                );
                 assert_eq!(
                     arch,
                     std::env::consts::ARCH,

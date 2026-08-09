@@ -13,22 +13,36 @@ name: Mint
 #     workflow is the only thing that can wake it;
 #   * `src/shuffle.rs` or `src/skip.rs` changed what the sieve executes, which
 #     invalidates every `sieve` and `skip_excursion` coefficient at once;
-#   * an (architecture, kernel) pair this crate dispatches to has no row. `price::DORMANT`
-#     is the list, with a reason per entry, and its own test holds it to `price::MINTED` in
-#     both directions — so a row landed here has to delete a line there, and that list
-#     going empty is this workflow's finish line.
+#   * an (operating system, architecture, kernel) triple this crate dispatches to has no
+#     row. `price::DORMANT` is the list of unpriced *kernels*, with a reason per entry, and
+#     its own test holds it to `price::MINTED` in both directions — so a row landed here
+#     has to delete a line there, and that list going empty is this workflow's finish
+#     line. An unpriced *machine* is not on that list and cannot be: it announces itself
+#     instead as `examples/survey.rs` refusing to judge, which
+#     `.github/workflows/native.yml` promotes to a failure on all six legs.
 on:
   workflow_dispatch:
     inputs:
       legs:
         description: >-
-          Which hardware to mint on. `x86_64` is the architecture that needs it: three of
-          its four rungs are unpriced, and the widest one a runner has is the one dispatch
-          would elect if it were. arm64's NEON row is minted and its scalar kernel is
-          unreachable, since NEON is baseline there and always priced.
+          Which machine to mint on — an architecture for all its operating systems, or one
+          label for one machine. A row is keyed on (os, arch, kernel) since
+          `native.yml` measured three machines losing on a fourth machine's row, so "the
+          x86_64 row" is not a thing that exists: each of the six legs below is its own
+          machine and needs its own hour. Pick one label to re-mint a single machine
+          rather than paying for six.
         type: choice
-        default: x86_64
-        options: [x86_64, arm64, all]
+        default: all
+        options:
+          - all
+          - x86_64
+          - aarch64
+          - linux-x86_64
+          - linux-aarch64
+          - macos-x86_64
+          - macos-aarch64
+          - windows-x86_64
+          - windows-aarch64
 
 permissions:
   contents: read
@@ -43,6 +57,15 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+
+# Bash on every leg, including the two Windows ones, where the default is PowerShell.
+# `native.yml` needs no such declaration because every step there is a bare `cargo`
+# invocation; the steps below pipe a measurement through `tee` and read `$LABEL`, which
+# PowerShell would spell differently and silently get wrong — `$LABEL` is an empty
+# variable there, not an environment lookup, so the artifact would be named `mint-.txt`.
+defaults:
+  run:
+    shell: bash
 
 jobs:
   # The `legs` choice has to be resolved into a matrix *before* the matrix exists, which
@@ -63,15 +86,22 @@ jobs:
           set -euo pipefail
           python3 - <<'PY' | tee -a "$GITHUB_OUTPUT"
           import json, os
+          # The same six machines `native.yml` proves correctness on, with the same
+          # labels, because they now stand in one-to-one correspondence: every leg that
+          # has to *pass* the survey's worth audit is a leg that needs its own row. The
+          # architecture is spelled `aarch64` rather than `arm64` to match `price::ARCH`,
+          # which is what the row is keyed on.
           legs = [
-              {"os": "ubuntu-24.04",     "label": "linux-x86_64", "arch": "x86_64"},
-              {"os": "macos-15-intel",   "label": "macos-x86_64", "arch": "x86_64"},
-              {"os": "ubuntu-24.04-arm", "label": "linux-arm64",  "arch": "arm64"},
-              {"os": "macos-15",         "label": "macos-arm64",  "arch": "arm64"},
+              {"os": "ubuntu-24.04",     "label": "linux-x86_64",     "arch": "x86_64"},
+              {"os": "macos-15-intel",   "label": "macos-x86_64",     "arch": "x86_64"},
+              {"os": "windows-2025",     "label": "windows-x86_64",   "arch": "x86_64"},
+              {"os": "ubuntu-24.04-arm", "label": "linux-aarch64",    "arch": "aarch64"},
+              {"os": "macos-15",         "label": "macos-aarch64",    "arch": "aarch64"},
+              {"os": "windows-11-arm",   "label": "windows-aarch64",  "arch": "aarch64"},
           ]
           want = os.environ["LEGS"]
           if want != "all":
-              legs = [leg for leg in legs if leg["arch"] == want]
+              legs = [leg for leg in legs if want in (leg["arch"], leg["label"])]
           assert legs, f"no leg matches {want!r}"
           print("legs=" + json.dumps(legs))
           PY

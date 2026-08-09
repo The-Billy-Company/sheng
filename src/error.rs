@@ -23,11 +23,21 @@ pub enum BuildError {
     /// Nobody has measured this machine, so no speedup can be promised on it.
     ///
     /// Not a defect and not a pattern problem: the arming gate compares measured
-    /// times, and [`price::MINTED`] holds no row for this (architecture, kernel) pair.
-    /// Either mint one (`cargo run --release --example mint`) and pass it in a
-    /// [`crate::Policy`], or accept that this machine runs unfiltered. Guessing from
-    /// another machine's silicon is the one option deliberately not offered.
+    /// times, and [`price::MINTED`] holds no row for this (operating system,
+    /// architecture, kernel) triple. Either mint one (`cargo run --release --example
+    /// mint`) and pass it in a [`crate::Policy`], or accept that this machine runs
+    /// unfiltered. Guessing from another machine's silicon is the one option
+    /// deliberately not offered.
+    ///
+    /// All three parts are reported because any two of them are not enough to find the
+    /// gap. `MINTED` can hold a row for this architecture *and* this kernel and still not
+    /// price this machine — that is the ordinary case for a second operating system on
+    /// familiar silicon, and reading only the first two would make the decline look like
+    /// a bug in resolution rather than a row nobody has minted yet.
     Uncalibrated {
+        /// The running target's [`crate::price::OS`], exactly as reported — the first
+        /// third of what to name when minting the missing row.
+        os: &'static str,
         /// The running target's [`crate::price::ARCH`], exactly as reported — what
         /// to name when minting the missing row.
         arch: &'static str,
@@ -74,9 +84,9 @@ impl core::fmt::Display for BuildError {
                 f,
                 "no sieve: no register-sized closed partition discriminates"
             ),
-            Self::Uncalibrated { arch, kernel } => write!(
+            Self::Uncalibrated { os, arch, kernel } => write!(
                 f,
-                "no sieve: nothing measured for {arch} with the {kernel:?} kernel — \
+                "no sieve: nothing measured for {os} {arch} with the {kernel:?} kernel — \
                  mint a calibration and pass it in a Policy"
             ),
             Self::Unmodeled { len, floor } => write!(

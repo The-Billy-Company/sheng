@@ -52,11 +52,14 @@ rather than checked.
 Because those two are the only empirical stages, they are also the only ones a caller can
 be wrong about — so `Policy` in `lib.rs` exposes exactly them: the calibration, the chains,
 the byte marginals, the nominal document length. `price::MINTED` carries one row per
-(architecture, kernel) pair that has actually been measured and `price::active()` resolves
-the running machine against it; a machine with no row declines every pattern rather than
-borrowing another machine's ratios. `shuffle::kernel()` reports which of the three kernels
-dispatch chose, which is what lets the differential test prove it compared a vector path
-against the scalar one instead of the scalar path against itself.
+(os, architecture, kernel) triple that has actually been measured and `price::active()`
+resolves the running machine against it; a machine with no row declines every pattern
+rather than borrowing another machine's ratios — which is not a hypothetical, since it is
+exactly what three of the six native legs were caught doing when the key was two columns
+wide. `shuffle::kernel()` reports which kernel dispatch chose — the cheapest one this
+machine's rows price, not the widest one its silicon offers — which is what lets the
+differential test prove it compared a vector path against the scalar one instead of the
+scalar path against itself.
 
 `price/` splits the same way `prior`/`selectivity`/`price` split from each other: `gate.rs`
 is pure arithmetic with no measured numbers in it, `calibration.rs` is the `Calibration`

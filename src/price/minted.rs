@@ -1,5 +1,5 @@
-//! The measured evidence: one [`Calibration`] row per (architecture, kernel) pair
-//! anybody has actually timed, plus the fail-safe row for everyone else.
+//! The measured evidence: one [`Calibration`] row per (operating system, architecture,
+//! kernel) triple anybody has actually timed, plus the fail-safe row for everyone else.
 
 use super::calibration::{Calibration, REGIMES};
 use crate::lattice::MAX_CONJUNCTS;
@@ -68,6 +68,7 @@ use crate::shuffle::Kernel;
 /// reached memory has no business making one. The same trap makes a cache-resident
 /// re-mint look like the shipped memory-resident row went stale.
 pub const MACOS_AARCH64_NEON: Calibration = Calibration {
+    os: "macos",
     arch: "aarch64",
     kernel: Kernel::Neon,
     host: "macos aarch64 · 16 logical cores · Neon kernel",
@@ -87,8 +88,9 @@ pub const MACOS_AARCH64_NEON: Calibration = Calibration {
 /// SSSE3; the sieve itself is where the architectures still disagree by a
 /// noticeable fraction. Inheriting one machine's numbers on the other would still
 /// misprice which patterns arm — which is the whole reason this crate keeps a row
-/// per (architecture, kernel) pair instead of one default.
+/// per (operating system, architecture, kernel) triple instead of one default.
 pub const LINUX_X86_64_SSSE3: Calibration = Calibration {
+    os: "linux",
     arch: "x86_64",
     kernel: Kernel::Ssse3,
     host: "linux x86_64 · 20 logical cores · Ssse3 kernel",
@@ -117,6 +119,7 @@ pub const LINUX_X86_64_SSSE3: Calibration = Calibration {
 /// and pass it in a [`crate::Policy`]; `cargo run --release --example mint` prints the
 /// row.
 pub const UNMEASURED: Calibration = Calibration {
+    os: "unmeasured",
     arch: "unmeasured",
     kernel: Kernel::Scalar,
     host: "no machine — nothing here was measured",
@@ -128,18 +131,31 @@ pub const UNMEASURED: Calibration = Calibration {
     sieve: [0.0; MAX_CONJUNCTS],
 };
 
-/// Every (architecture, kernel) pair anybody has actually measured. [`super::active`]
+/// Every (operating system, architecture, kernel) triple anybody has actually measured.
+/// [`super::active`]
 /// picks from here by matching the running target; adding silicon means adding a
 /// row, not editing a default.
 ///
-/// The key is `(architecture, kernel)`, not `(os, architecture, kernel)` — Windows is
-/// not a third row waiting to be minted, it is a claim that these same two already
-/// cover it. `.github/workflows/native.yml` runs both rows' underlying (architecture,
-/// kernel) pairs natively across all six Windows/Linux/macOS × x86_64/arm64 legs on
-/// every push: each leg proves dispatch chose the matching vector kernel and that the
-/// gate above armed no row that then lost against real source text. An OS column
-/// would only earn its keep the day one leg measures a loss the other two don't —
-/// evidence, not a guess that Windows differs, is what would justify it.
+/// The key is `(os, architecture, kernel)`, and the first column is here because a
+/// measurement put it here. It used to be `(architecture, kernel)`, on the reasoning
+/// that Windows was not a third row waiting to be minted but a claim that the other two
+/// already covered it — with the standing condition that an OS column "would only earn
+/// its keep the day one leg measures a loss the other two don't".
+///
+/// That day came the first time `.github/workflows/native.yml` actually ran. Wired into
+/// `ci.yml` rather than only `release.yml`, its six Windows/Linux/macOS × x86_64/arm64
+/// legs put three machines on a row minted on a fourth, and `examples/survey.rs` caught
+/// every one of the three arming a pattern that then lost against real source text —
+/// `macos` x86_64 by 3%, both `aarch64` servers by 8%. The mint says why: that macOS box
+/// times its own SSSE3 sieve at 0.54 ns/B where the Linux row it was borrowing claims
+/// 0.22, while the engine walk it is weighed against differs by only half that. A row is
+/// a claim about one machine's memory system, and the three legs that passed had been
+/// lucky in their silicon rather than vindicated by it.
+///
+/// (`os`, `architecture`) is not the *right* key — the right key is the machine, and two
+/// `aarch64` Linux servers can differ. It is the finest key a running binary can ask
+/// about itself, which is a different and more useful property. See
+/// [`OS`](crate::price::OS).
 ///
 /// # This slice is also the dispatch ladder's permission list
 ///
@@ -155,12 +171,17 @@ pub const UNMEASURED: Calibration = Calibration {
 ///   describes a narrower shuffle and thereby strand that install on [`UNMEASURED`].
 ///   Which kernels are in that state is not left to be inferred from this slice's
 ///   absences: [`DORMANT`] names them, and a test holds the two lists to each other.
-/// * A row is therefore per *kernel*, not per machine, which is why these names carry
-///   both halves of the key. One `cargo run --release --example mint` prints a row for
+/// * A row is per *kernel* as well as per machine, which is why these names carry all
+///   three parts of the key. One `cargo run --release --example mint` prints a row for
 ///   every kernel the running silicon has, so a machine's rows can be pasted in
 ///   together or one at a time without either one implying the other.
-///   `.github/workflows/mint.yml` is that run, on real hardware for every
-///   (architecture, kernel) pair this crate dispatches to.
+///   `.github/workflows/mint.yml` is that run, on real hardware, for each of the six
+///   machines `.github/workflows/native.yml` proves this crate correct on.
+///
+/// And what this slice orders is nothing. [`crate::shuffle::kernel`] ranks the rungs a
+/// machine has by the `sieve` cost its own rows report, so the *order* of the entries
+/// here is presentation only — a slower kernel listed first cannot win a dispatch, and a
+/// faster one listed last cannot lose it.
 pub const MINTED: &[Calibration] = &[MACOS_AARCH64_NEON, LINUX_X86_64_SSSE3];
 
 /// Kernels this crate implements and some silicon can execute, that [`MINTED`] prices on
@@ -209,14 +230,15 @@ mod tests {
     use crate::prior;
 
     /// Every row must describe a machine that could exist, and no two rows may claim
-    /// the same (architecture, kernel) pair — [`super::super::active`] resolves by
+    /// the same (os, architecture, kernel) triple — [`super::super::active`] resolves by
     /// first match, so a duplicate would silently shadow a measurement.
     #[test]
     fn the_minted_rows_are_distinct_and_self_describing() {
         for (i, cal) in MINTED.iter().enumerate() {
             assert!(
                 Residency::ALL.iter().any(|&at| cal.is_measured(at)),
-                "{} row {i} measured nothing in any regime",
+                "{} {} row {i} measured nothing in any regime",
+                cal.os,
                 cal.arch
             );
             assert!(
@@ -226,8 +248,9 @@ mod tests {
             assert!(
                 MINTED[..i]
                     .iter()
-                    .all(|seen| (seen.arch, seen.kernel) != (cal.arch, cal.kernel)),
-                "duplicate calibration for {} / {:?}",
+                    .all(|seen| (seen.os, seen.arch, seen.kernel) != (cal.os, cal.arch, cal.kernel)),
+                "duplicate calibration for {} {} / {:?}",
+                cal.os,
                 cal.arch,
                 cal.kernel
             );
@@ -246,23 +269,32 @@ mod tests {
             ladder.contains(&chosen),
             "dispatch chose {chosen:?}, which this silicon cannot execute"
         );
-        let priced = |kernel| {
-            MINTED
-                .iter()
-                .any(|c| c.arch == crate::price::ARCH && c.kernel == kernel)
+        let row = |kernel| {
+            MINTED.iter().find(|c| {
+                c.os == crate::price::OS && c.arch == crate::price::ARCH && c.kernel == kernel
+            })
         };
-        if ladder.iter().copied().any(priced) {
+        if ladder.iter().copied().any(|k| row(k).is_some()) {
             assert!(
-                priced(chosen),
-                "{} has a priced kernel but dispatch chose the unpriced {chosen:?}",
+                row(chosen).is_some(),
+                "{} {} has a priced kernel but dispatch chose the unpriced {chosen:?}",
+                crate::price::OS,
                 crate::price::ARCH
             );
-            // And the *fastest* such, or the ladder's order is decoration.
-            let best = ladder.iter().copied().find(|&k| priced(k));
+            // And the *cheapest measured* such, or the rows are decoration. Not the
+            // widest: `available` orders by register width, which x86_64 has already
+            // measured to be the wrong order, so this reproduces the rule in
+            // `arch::kernel` rather than the prior it overrides.
+            let best = ladder
+                .iter()
+                .copied()
+                .filter_map(|k| row(k).map(|c| (k, c.sieve_per_byte(MAX_CONJUNCTS))))
+                .min_by(|(_, a), (_, b)| a.total_cmp(b))
+                .map(|(k, _)| k);
             assert_eq!(
                 Some(chosen),
                 best,
-                "dispatch settled for {chosen:?} while {best:?} is both faster and priced"
+                "dispatch settled for {chosen:?} while {best:?} is both cheaper and priced"
             );
         }
     }
@@ -279,24 +311,26 @@ mod tests {
     #[test]
     fn an_unpriced_kernel_is_declared_rather_than_merely_absent() {
         let priced = |kernel| {
-            MINTED
-                .iter()
-                .any(|cal| cal.arch == crate::price::ARCH && cal.kernel == kernel)
+            MINTED.iter().any(|cal| {
+                cal.os == crate::price::OS && cal.arch == crate::price::ARCH && cal.kernel == kernel
+            })
         };
         let declared = |kernel| DORMANT.iter().any(|&(dormant, _)| dormant == kernel);
         for &kernel in crate::shuffle::available() {
             assert!(
                 !kernel.is_vector() || priced(kernel) || declared(kernel),
-                "{} can run {kernel:?} and nothing prices it — mint a row, or add it to \
-                 DORMANT with the reason it is waiting",
+                "{} {} can run {kernel:?} and nothing prices it — mint a row, or add it \
+                 to DORMANT with the reason it is waiting",
+                crate::price::OS,
                 crate::price::ARCH
             );
         }
         for &(kernel, why) in DORMANT {
             assert!(
                 !priced(kernel),
-                "{kernel:?} is priced on {} but still listed DORMANT as {why:?} — a row \
-                 landing is what deletes that line",
+                "{kernel:?} is priced on {} {} but still listed DORMANT as {why:?} — a \
+                 row landing is what deletes that line",
+                crate::price::OS,
                 crate::price::ARCH
             );
         }

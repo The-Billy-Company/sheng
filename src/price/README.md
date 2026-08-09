@@ -26,3 +26,10 @@ for — so a mint that followed dispatch could never reach a newly added
 instruction set. Pasting a row in is therefore what wakes a kernel, and it comes
 with a deletion: `DORMANT` names the same kernel and its reason, and `minted.rs`'s
 own tests hold the two lists to each other in both directions.
+
+A row is keyed on `(os, arch, kernel)`, so it takes one run **per machine** — six, to
+cover what `.github/workflows/native.yml` proves correct. That column is not
+fastidiousness: with the key two columns wide, three of those six legs priced themselves
+from a fourth machine's row and `examples/survey.rs` caught every one of them arming a
+pattern that then lost. And among the rows a machine does have, dispatch picks the
+cheapest `sieve`, never the widest register — on x86_64 those are different kernels.

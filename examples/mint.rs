@@ -406,15 +406,38 @@ fn price(cache: Corpus<'_>, memory: Corpus<'_>) {
     // sixteen-block quotient resident in either regime, so it is not predicted to move,
     // and it is a maximum over a five-pattern slate — warning on its noise would train a
     // reader to ignore this line.
+    let mut cache_holds = true;
     for (label, hot, cold) in [
         ("dfa_skip", skip[0], skip[1]),
         ("dfa_excursion", excursions[0], excursions[1]),
     ] {
         if hot > cold {
+            cache_holds = false;
             println!(
                 "// WARNING {label}: cache-resident {hot:.4} exceeds memory-resident \
-                 {cold:.4} — re-run on an idle machine before pasting this row."
+                 {cold:.4} — a hotter haystack cannot cost the engine more, so this \
+                 column measured a busy machine rather than a memory system."
             );
+        }
+    }
+    // And then the column is *withheld* rather than printed with the warning above it.
+    // Zero is this file's spelling of "never timed", so an `x86_64` caller declaring
+    // `Residency::Cache` gets `Uncalibrated` — the same refusal the crate makes about a
+    // machine it has never seen, which is the honest answer about a regime this run
+    // failed to measure.
+    //
+    // The whole column goes, not the inverted coefficient. `Calibration::is_measured`
+    // reads `dfa_skip` alone, so zeroing a lone inverted `dfa_excursion` would leave the
+    // regime looking measured while pricing the engine's excursion at *free* — an
+    // over-arming row, which is the one direction this crate never rounds. A shared-CPU
+    // runner is the normal case for this, not an exceptional one: every leg of
+    // `.github/workflows/mint.yml` reports four logical cores.
+    if !cache_holds {
+        println!("// cache-resident column withheld: every coefficient below reads [0.0, memory].");
+        skip[0] = 0.0;
+        excursions[0] = 0.0;
+        for instrument in &mut skip_e {
+            instrument[0] = 0.0;
         }
     }
 
@@ -433,7 +456,10 @@ fn price(cache: Corpus<'_>, memory: Corpus<'_>) {
     // machine class that produced it, and `price::active()` resolves the running target
     // against `MINTED`. Name it for the target triple, add it to that slice.
     println!("\npub const {}: Calibration = Calibration {{", row_name());
-    println!("    arch: {:?},", std::env::consts::ARCH);
+    // Printed from the crate's own `cfg`-derived constants rather than from
+    // `std::env::consts`, so the row names exactly what `price::active` will match it by.
+    println!("    os: {:?},", sheng::price::OS);
+    println!("    arch: {:?},", sheng::price::ARCH);
     println!("    kernel: Kernel::{:?},", sheng::shuffle::kernel());
     println!("    host: {:?},", common::host());
     println!("    minted: {:?},", common::today());
@@ -461,14 +487,16 @@ fn price(cache: Corpus<'_>, memory: Corpus<'_>) {
 /// constant a mint prints cannot be labeled with a machine — or a kernel — other than
 /// the one that ran it.
 ///
-/// The kernel is in the name because it is half the key `price::MINTED` is looked up
-/// by. Two rows off the same x86_64 box differ in nothing else, and a pair of
-/// `LINUX_X86_64`s would be an invitation to paste one over the other.
+/// All three parts are in the name because all three are the key `price::MINTED` is
+/// looked up by. Two rows off the same x86_64 box differ in nothing but the kernel, and a
+/// pair of `LINUX_X86_64`s would be an invitation to paste one over the other — and two
+/// rows off the same architecture under different operating systems are two machines,
+/// which is the distinction that column was added to keep.
 fn row_name() -> String {
     format!(
         "{}_{}_{}",
-        std::env::consts::OS.to_uppercase(),
-        std::env::consts::ARCH.to_uppercase(),
+        sheng::price::OS.to_uppercase(),
+        sheng::price::ARCH.to_uppercase(),
         format!("{:?}", sheng::shuffle::kernel()).to_uppercase()
     )
 }

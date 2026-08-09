@@ -260,6 +260,7 @@ fn every_declared_error_variant_explains_itself_consistently() {
         BuildError::Shape(Decline::TooWide),
         BuildError::NoQuotient,
         BuildError::Uncalibrated {
+            os: "hypothetical",
             arch: "hypothetical",
             kernel: sheng::shuffle::kernel(),
         },
