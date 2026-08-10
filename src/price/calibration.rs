@@ -54,10 +54,53 @@ pub enum Residency {
 /// the variant count of [`Residency`], and the array indexing below depends on it.
 pub const REGIMES: usize = 2;
 
+/// The volume above which one pass over a corpus is reading from main memory rather
+/// than from cache.
+///
+/// Eight mebibytes is past the last-level cache of every machine [`MINTED`] names,
+/// which is the whole of what this constant claims. It is a number rather than a probe
+/// because cache geometry is not portably knowable — reading it means an operating
+/// system call this crate does not make on any target, and would still not answer the
+/// question, since what matters is how much of that cache the caller's own working set
+/// is competing for.
+pub const RESIDENT_ABOVE: usize = 8 << 20;
+
 impl Residency {
     /// Every regime, in coefficient-index order — so a mint can emit each column and a
     /// test can sweep them without either restating the variant list and drifting.
     pub const ALL: [Self; REGIMES] = [Self::Cache, Self::Memory];
+
+    /// Which regime a single pass over `bytes` of haystack runs in.
+    ///
+    /// [`crate::Policy::new`] asks for a residency rather than guessing one because this
+    /// crate never sees the corpus. That reasoning does not extend to the caller, who
+    /// usually knows exactly how many bytes they are about to hand the engine — and for
+    /// them the answer is arithmetic against [`RESIDENT_ABOVE`] rather than a judgement
+    /// call about somebody's cache hierarchy. `examples/survey.rs` is this call, and it
+    /// used to be this constant copied into the example.
+    ///
+    /// # Which way it is wrong, and who has to override it
+    ///
+    /// Two situations make a corpus cache-resident that this cannot see, and both read
+    /// as [`Residency::Memory`] here: a working set **re-scanned** rather than traversed
+    /// once is resident however large it is, and a machine whose last-level cache
+    /// exceeds [`RESIDENT_ABOVE`] holds more than this admits.
+    ///
+    /// That is the unsafe direction, and it is named here rather than buried because it
+    /// is the one error this whole helper can make. `Memory` is the regime a sieve looks
+    /// *better* in — the engine's `memchr` is cheapest exactly where the sieve is least
+    /// competitive — so a caller in either situation who takes this answer arms patterns
+    /// that then measure as losses. They should state [`Residency::Cache`] outright.
+    /// A caller streaming a corpus once, which is what the count in hand usually means,
+    /// is the case this answers correctly.
+    #[must_use]
+    pub const fn of_working_set(bytes: usize) -> Self {
+        if bytes > RESIDENT_ABOVE {
+            Self::Memory
+        } else {
+            Self::Cache
+        }
+    }
 }
 
 /// Per-byte costs for every kernel the gate weighs, each timed **alone** so one
@@ -277,6 +320,225 @@ impl Calibration {
     }
 }
 
+/// What one confirming pass costs, and therefore what a refutation is worth.
+///
+/// [`Rival::Engine`] is the shipped answer and the right one whenever the work a
+/// refutation skips really is a regex search: the price is read from the automaton's own
+/// accelerator rather than assumed ([`Calibration::rival_per_byte`]).
+///
+/// # Why the other two exist
+///
+/// A sieve does not produce a faster scan. It produces a **proof that a document needs
+/// no further work**, and what that proof is worth is decided entirely by what the
+/// further work would have been. Against `regex-automata` it is worth very little,
+/// because `regex-automata` is extremely fast — which is why the gate correctly declines
+/// most patterns, and why a per-byte filter can never front a rare lead byte profitably
+/// however selective it is.
+///
+/// That was unreachable while the rival's price could only be read off a [`crate::Dfa`],
+/// because an automaton describes what the *pattern* costs to confirm and not what the
+/// caller's pipeline costs to run. A caller could only forge a [`Calibration`] and misuse
+/// [`Calibration::dfa_walk`] to mean something it does not, which would have corrupted
+/// [`Calibration::skip_per_byte`] in the same motion. These two variants are where that
+/// fact belongs.
+///
+/// # Which confirms are actually expensive
+///
+/// Worth stating in figures, because intuition is a poor guide here and the intuitive
+/// answers are mostly wrong. [`Calibration::dfa_walk`] is between 1.3 and 2.1 ns per
+/// byte on every machine [`MINTED`] names, so "expensive" means expensive against
+/// roughly **two nanoseconds a byte** — which is a low bar for a network and a
+/// surprisingly high one for anything running on the same core.
+///
+/// These do **not** qualify, and naming them is the more useful half: zstd or gzip
+/// decompression lands around 1–3 ns/B, AES with hardware support under 1, and a decent
+/// JSON parser 1–3. All are within a small multiple of a walk, so a sieve in front of
+/// them is priced almost exactly as it is in front of the engine and should be, since
+/// the gate's answer barely moves.
+///
+/// These do: extracting text from a PDF or an image, at hundreds of ns/B; an embedding
+/// or any other model call, at thousands; a per-document network round trip, whose
+/// latency alone dwarfs the scan; and full-text indexing with the writes it implies. For
+/// these the rival term is two to four orders of magnitude above a walk, the gate is not
+/// close, and selectivity is the only thing still deciding — which is the regime a
+/// refutation sieve was always the right tool for.
+///
+/// # Which of the two to reach for
+///
+/// [`Rival::Walks`] is **dimensionless** — a multiple of this machine's own dense-DFA
+/// walk — and is the one to prefer, because it is the one that keeps the promise this
+/// module makes about clocks: scale every coefficient in a [`Calibration`] by any
+/// positive constant and no decision moves. A ratio scales along with them. An absolute
+/// duration does not, so mixing one into the inequality makes the verdict a function of
+/// ambient load in exactly the way `scaling_the_whole_calibration_changes_no_decision`
+/// exists to forbid.
+///
+/// [`Rival::NanosPerByte`] is for the caller who has *timed* their confirm and wants that
+/// figure used as measured. It buys exactness about one machine and gives up the scale
+/// invariance above. That trade is usually fine here and it is worth being precise about
+/// why: this variant exists for confirms costing orders of magnitude more than a walk, and
+/// no plausible clock drift moves a verdict decided by three orders of magnitude. It is a
+/// bad choice near parity, which is the one place the invariance was ever load-bearing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Rival {
+    /// Ask the automaton — [`crate::Dfa::accelerator`] on its start state — and price the
+    /// engine off what it says it will skip. The default, and the only variant that reads
+    /// the automaton at all.
+    Engine,
+    /// A confirm costing this many dense-DFA walks per byte of document.
+    ///
+    /// Dimensionless, and therefore the variant that preserves scale invariance. A
+    /// gzip-then-parse pipeline at roughly a hundred times a DFA walk is `Walks(100.0)`.
+    Walks(f64),
+    /// A confirm costing this many nanoseconds per byte of document, as measured.
+    ///
+    /// The unit every [`Calibration`] coefficient is already in, so this is read
+    /// straight into the inequality with no conversion — and with no rescaling either,
+    /// which is the caveat the type's documentation states.
+    NanosPerByte(f64),
+}
+
+impl Rival {
+    /// What one confirming pass costs per byte.
+    ///
+    /// `accelerator` is what the engine said it will skip past, or `None` where the
+    /// automaton would not name a start state to ask about. Read by [`Rival::Engine`]
+    /// alone — the other two carry their own price and are indifferent to the automaton,
+    /// which is the entire point of them.
+    ///
+    /// # A nonsense price is refused at the comparison, not here
+    ///
+    /// Neither float variant is validated. That is a placement decision rather than an
+    /// omission: a price that is not a price has to be refused wherever it comes from,
+    /// and a caller can also reach the gate with a hand-built [`Calibration`] carrying
+    /// the same defect. So the guard lives once in [`CostFact::pays`], which requires
+    /// both sides of the inequality to be real costs before comparing them, and covers
+    /// every source of the problem instead of the two that happen to be spelled here.
+    ///
+    /// It is worth being exact about why this is not merely tidier. A negative rival
+    /// does **not** fail closed on its own — it inverts the inequality and arms a leaky
+    /// filter — so validating in this function and calling the matter settled would have
+    /// left the identical hole open one constructor over.
+    ///
+    /// [`CostFact::pays`]: super::CostFact::pays
+    #[must_use]
+    pub fn per_byte(
+        self,
+        cal: &Calibration,
+        accelerator: Option<&[u8]>,
+        freq: &[f64; 256],
+        at: Residency,
+    ) -> f64 {
+        match (self, accelerator) {
+            (Self::Engine, Some(accel)) => cal.rival_per_byte(accel, freq, at),
+            // Nothing to read the engine's intent from, so credit it with its cheapest
+            // path and let the sieve stand down, rather than arm against an unknown.
+            (Self::Engine, None) => cal.dfa_skip[at as usize],
+            (Self::Walks(walks), _) => cal.dfa_walk * walks,
+            (Self::NanosPerByte(nanos), _) => nanos,
+        }
+    }
+}
+
+/// What the caller would run if this sieve did not exist — the baseline the gate
+/// measures a refutation against.
+///
+/// # The comparison this exists to refuse
+///
+/// [`Rival`] answers "what does one confirm cost", and for a long time the gate took
+/// that answer as the whole right-hand side: the caller pays `rivals * rival` on every
+/// document, and the sieve is worth the fraction of that it retires. That is only the
+/// caller's real alternative when confirming is the *only* way to decide, and for a
+/// crate whose entire subject is regular expressions it usually is not — the pattern
+/// has an engine, the engine is in the dependency graph, and the engine answers the
+/// same question exactly.
+///
+/// The arithmetic is not close. Take a confirm at five hundred walks a byte and a
+/// filter armed at the gate's own threshold, so roughly four documents in five survive
+/// it. Fronting the confirm directly, the sieve looks like a four-hundred-fold
+/// improvement over paying five hundred walks on everything. But nobody pays five
+/// hundred walks on everything: they run the engine, which is *exact*, so the share of
+/// documents reaching the confirm is the true hit rate — a ten-thousandth, for a secret
+/// scanner — and the pipeline costs one walk plus a rounding error. The sieve was two
+/// orders of magnitude behind the alternative it was never compared against.
+///
+/// So the gate takes the **cheaper** of the two ([`crate::price::CostFact::unfiltered`]),
+/// and this is where a caller says which alternatives they actually have.
+///
+/// # Why no hit rate appears anywhere
+///
+/// Because it cancels. A sieve in front of an exact pre-pass changes what the pre-pass
+/// costs and nothing downstream of it: the documents that reach the confirm are the ones
+/// that truly match, on both sides of the inequality, whether or not a refutation ran
+/// first. Every term after the exact decision is identical in both pipelines and drops
+/// out of the difference — which is the whole reason this is one number rather than a
+/// model of the caller's architecture.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Bypass {
+    /// One engine per rival, priced off the automaton being fronted — `rivals` times
+    /// [`Rival::Engine`]. The default, and the one that costs nothing to be right:
+    /// under `Rival::Engine` it is exactly the blind pipeline and changes no verdict,
+    /// and under a stated rival it is the engine the caller already has.
+    Engines,
+    /// One exact pre-pass over the whole slate, at a stated price rather than `rivals`
+    /// separate ones — a union automaton, Hyperscan, an Aho-Corasick prefilter over the
+    /// slate's literals, an index probe.
+    ///
+    /// Stated because it is not derivable from here, and because it is usually a much
+    /// stronger baseline than it sounds. Measured on the machine these paragraphs were
+    /// written on, sixty-four literal-prefixed rules cost **11.96 ns/B as separate
+    /// engines and 0.12 as one union** — the fan-out, almost exactly, because the union
+    /// keeps a multi-literal accelerator and so still pays one pass's price. A sieve
+    /// fronting *that* has essentially nothing to retire, which is the answer for most
+    /// slates with literals in them.
+    ///
+    /// What bounds the union is construction rather than throughput, so a caller reaching
+    /// for this should know where it stops: over the same rules the dense table grows
+    /// 12.6 KiB → 4.5 MiB → 65 MiB at 1, 64 and 256 rules, and the build goes 0.2 ms →
+    /// 0.75 s → 114 s. Past 256 it does not determinize inside a gibibyte at all, and
+    /// [`Bypass::Engines`] is the only honest baseline left.
+    Slate(Rival),
+    /// No exact decision procedure can run at this point in the pipeline, so the confirm
+    /// really is what a survivor costs.
+    ///
+    /// The narrow case, and worth being suspicious of: it is not enough that the confirm
+    /// be expensive, or that the engine be inconvenient. It has to be *impossible* to
+    /// decide the question exactly and cheaply where the sieve runs. Screening packets
+    /// against rules whose matches only exist in a reassembled flow is the honest
+    /// exemplar — the refutation is per packet, the exact answer is not available per
+    /// packet, and there is nothing cheaper to be compared against.
+    ///
+    /// Prices exactly as the gate did before a baseline existed, which is the other
+    /// reason to name it: a caller who believes the old arithmetic can ask for it.
+    Absent,
+}
+
+impl Bypass {
+    /// What the whole alternative pipeline costs per byte, already summed over the
+    /// slate — so [`crate::price::CostFact::bypass`] is an absolute price and not
+    /// something the gate has to know how to scale.
+    ///
+    /// `accelerator` is what the automaton said it will skip past, exactly as
+    /// [`Rival::per_byte`] reads it.
+    #[must_use]
+    pub fn per_byte(
+        self,
+        cal: &Calibration,
+        accelerator: Option<&[u8]>,
+        freq: &[f64; 256],
+        at: Residency,
+        rivals: usize,
+    ) -> f64 {
+        match self {
+            Self::Engines => {
+                Rival::Engine.per_byte(cal, accelerator, freq, at) * super::gate::fanout(rivals)
+            },
+            Self::Slate(one) => one.per_byte(cal, accelerator, freq, at),
+            Self::Absent => f64::INFINITY,
+        }
+    }
+}
+
 /// What share of the corpus a byte set covers under `freq`, clamped to a probability.
 ///
 /// Factored out because both blends above need exactly it, and a set that summed past
@@ -391,6 +653,12 @@ mod tests {
                             len: NOMINAL_LEN,
                             sieve: cal.sieve_per_byte(MAX_CONJUNCTS),
                             rival: cal.rival_per_byte(accel, &freq, at),
+                            rivals: 1,
+                            // Read through the seam rather than pinned, so the baseline
+                            // rescales with the row exactly as the rival does — a bypass
+                            // that did not would break the invariance from the one side
+                            // the sweep would otherwise never look at.
+                            bypass: Bypass::Engines.per_byte(cal, Some(accel), &freq, at, 1),
                         };
                         let (base, now) = (of(&MACOS_AARCH64_NEON), of(&scaled));
                         assert_eq!(
@@ -469,6 +737,103 @@ mod tests {
         let reported = std::env::consts::OS;
         if OS != "unknown" && !reported.is_empty() {
             assert_eq!(OS, reported, "an enumerated arm is misspelled");
+        }
+    }
+
+    /// [`Rival::Engine`] must be *exactly* the arithmetic it was factored out of.
+    ///
+    /// This seam arrived under an existing default, so the whole of its risk is here
+    /// rather than in the two new variants: a default that shifted by any amount would
+    /// silently re-price every verdict the crate has ever taken, and every row
+    /// `examples/survey.rs` audits, without a single caller having asked for anything.
+    #[test]
+    fn the_engine_variant_prices_exactly_what_reading_the_automaton_did() {
+        let freq = prior::Prior::Source.byte_freq();
+        for at in REGIME {
+            for accel in [&b""[..], b"W", b"e", b"abg"] {
+                assert_eq!(
+                    Rival::Engine.per_byte(&MACOS_AARCH64_NEON, Some(accel), &freq, at),
+                    MACOS_AARCH64_NEON.rival_per_byte(accel, &freq, at),
+                    "{at:?} accel={accel:?}"
+                );
+            }
+            // An automaton that will not name a start state is the one case this variant
+            // answers with no accelerator to read. It credits the engine with its
+            // cheapest path, which stands the sieve down rather than arming it against
+            // an unknown — the direction every other estimate here also errs in.
+            assert_eq!(
+                Rival::Engine.per_byte(&MACOS_AARCH64_NEON, None, &freq, at),
+                MACOS_AARCH64_NEON.dfa_skip[at as usize],
+                "{at:?}"
+            );
+        }
+    }
+
+    /// The documented difference between the two stated rivals, made measurable instead
+    /// of promised.
+    ///
+    /// [`Rival::Walks`] is a multiple of a coefficient, so it rescales with the row and
+    /// `scaling_the_whole_calibration_changes_no_decision` keeps holding.
+    /// [`Rival::NanosPerByte`] is a duration taken on some other clock, so it does not —
+    /// and that is asserted here rather than merely admitted in prose, for the same
+    /// reason `prior::Prior::Text` is kept as a superseded model: a limitation nobody
+    /// measures is a limitation nobody notices growing.
+    #[test]
+    fn only_the_dimensionless_rival_survives_rescaling_the_calibration() {
+        let freq = prior::Prior::Source.byte_freq();
+        let at = Residency::Memory;
+        let by = |k: f64| Calibration {
+            dfa_skip: MACOS_AARCH64_NEON.dfa_skip.map(|c| c * k),
+            dfa_walk: MACOS_AARCH64_NEON.dfa_walk * k,
+            // Dimensionless already, so it must not scale. See the sweep above.
+            dfa_excursion: MACOS_AARCH64_NEON.dfa_excursion,
+            sieve: MACOS_AARCH64_NEON.sieve.map(|c| c * k),
+            ..MACOS_AARCH64_NEON
+        };
+        let speedup = |cal: &Calibration, rival: Rival| {
+            CostFact {
+                fallthrough: 1e-4,
+                len: NOMINAL_LEN,
+                sieve: cal.sieve_per_byte(1),
+                rival: rival.per_byte(cal, None, &freq, at),
+                rivals: 1,
+                // The rival term in isolation, which is what this test is about: any
+                // finite baseline is cheaper than fifty walks and would clamp it, so
+                // the scaling question would never reach the term being asked about.
+                bypass: f64::INFINITY,
+            }
+            .speedup()
+        };
+        let (base, hot) = (by(1.0), by(4.0));
+
+        let ratio = (speedup(&base, Rival::Walks(50.0)) - speedup(&hot, Rival::Walks(50.0))).abs();
+        assert!(
+            ratio < 1e-9,
+            "a rival stated as walks moved the verdict by {ratio:e} under a rescaling \
+             that cancels — it is not dimensionless after all"
+        );
+        let duration = (speedup(&base, Rival::NanosPerByte(5.0))
+            - speedup(&hot, Rival::NanosPerByte(5.0)))
+        .abs();
+        assert!(
+            duration > 1e-3,
+            "a rival stated in nanoseconds survived a rescaling of everything it is \
+             compared against, so the caveat on the variant is describing nothing"
+        );
+    }
+
+    /// A count of bytes is a fact the caller has; which regime it puts them in is
+    /// arithmetic. The boundary is inclusive of cache on purpose — at exactly the
+    /// last-level cache size the working set still fits.
+    #[test]
+    fn a_working_set_past_last_level_cache_reads_as_memory_resident() {
+        for (bytes, want) in [
+            (0, Residency::Cache),
+            (RESIDENT_ABOVE, Residency::Cache),
+            (RESIDENT_ABOVE + 1, Residency::Memory),
+            (usize::MAX, Residency::Memory),
+        ] {
+            assert_eq!(Residency::of_working_set(bytes), want, "{bytes} bytes");
         }
     }
 

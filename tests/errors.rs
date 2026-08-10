@@ -252,6 +252,8 @@ fn every_declared_error_variant_explains_itself_consistently() {
         len: 4096.0,
         sieve: 1.0,
         rival: 0.2,
+        rivals: 1,
+        bypass: f64::INFINITY,
     };
     let build_errors = [
         BuildError::Automaton("unbalanced group".to_string()),

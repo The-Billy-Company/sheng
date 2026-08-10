@@ -25,21 +25,9 @@ dispatch elected, because dispatch will not elect a kernel this file has no row
 for — so a mint that followed dispatch could never reach a newly added
 instruction set. Pasting a row in is therefore what wakes a kernel, and it comes
 with a deletion: `DORMANT` names the same machine and kernel and its reason, and
-`minted.rs`'s own tests hold the two lists to each other in both directions. That list is
-keyed on `(os, arch, kernel)` like the rows are, and for the same reason — `linux`/`x86_64`
-covers runners with and without AVX-512, so one kernel is unpriced there while
-`windows`/`x86_64` prices it.
+`minted.rs`'s own tests hold the two lists to each other in both directions.
 
 A row is keyed on `(os, arch, kernel)`, so it takes one run **per machine** — six, to
 cover what `.github/workflows/native.yml` proves correct, and all six have now been run.
-That column is not fastidiousness: with the key two columns wide, three of those six legs
-priced themselves from a fourth machine's row and `examples/survey.rs` caught every one of
-them arming a pattern that then lost. And among the rows a machine does have, dispatch
-picks the cheapest `sieve`, never the widest register — on x86_64 those are different
-kernels, and the widest is the slowest of three.
-
-Six runs is still not one row per machine in the world. `MACOS_AARCH64_NEON` is the row
-where that shows: its own mint leg and a 16-core Apple laptop disagree by enough that the
-runner's row arms a pattern the laptop then loses by 1.8x. Where one key covers machines
-that disagree, ship the row that overstates the engine's disadvantage least — an under-armed
-sieve costs a win nobody sees, an over-armed one ships a slowdown.
+Why that key earns its columns, and what to do when it covers two machines that disagree,
+is `MINTED`'s own doc in `minted.rs`.

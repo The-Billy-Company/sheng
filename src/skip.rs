@@ -47,20 +47,14 @@
 //! * **anything else** — no skip. A set with a non-ASCII member needs a second
 //!   table pair to stay exact, and declining costs only the speedup.
 //!
-//! There is no third instrument, and that is a measured decision rather than a gap.
-//! NEON has no `movemask`, so [`Instrument::Wide`] pays a narrowing plus a lane read on
-//! every 16-byte block just to ask whether the block hit — a question whose answer is
-//! usually no. The obvious repair is a *carried mask*: run four blocks with nothing
-//! carried between them, `or` the hit vectors, ask once for all 64 bytes, and narrow
-//! only on the stride that answers yes. Priced against the shipped loop over escape
-//! densities from nothing to one byte in ten, it wins at most 8% — in the streaming
-//! limit of runs so long the block never escapes, which is [`Escape::Never`] and never
-//! reaches this classifier at all — and *loses* by up to a factor of two through the
-//! band a wide set really occupies, where a hit lands inside most strides and the
-//! shipped loop stops one or two blocks in while the carried one has already paid for
-//! four and must then rescan them. Its best case does not clear
-//! [`MARGIN`](crate::price::MARGIN); its realistic case is a regression. A wider stride
-//! is the wrong trade for a loop whose whole purpose is to stop early.
+//! There is no third instrument, and that is a measured decision rather than a gap. The
+//! obvious repair for [`Instrument::Wide`]'s per-block narrowing on NEON is a *carried
+//! mask* over four blocks at once, and it was priced across escape densities from
+//! nothing to one byte in ten: its best case does not clear
+//! [`MARGIN`](crate::price::MARGIN), and through the band a wide set really occupies it
+//! loses by up to a factor of two, because the shipped loop stops one or two blocks in
+//! where the carried one has already paid for four. A wider stride is the wrong trade
+//! for a loop whose whole purpose is to stop early.
 //!
 //! Every instrument is checked against [`Escape::find_scalar`], the obvious
 //! `set.contains(b)` loop, over every byte value and every set shape the harvest can

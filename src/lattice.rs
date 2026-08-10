@@ -33,11 +33,8 @@
 //! Luchaup, De Carli, Jha & Bach, *Deep packet inspection with DFA-trees and
 //! parametrized language overapproximation*, INFOCOM 2014
 //! (doi:10.1109/INFOCOM.2014.6847977), whose Definition 7 is `|D'| < |D|` with
-//! `L(D) ⊆ L(D')` and which calls its shrunk DFAs "a special case of quotient
-//! automaton"; restated as a cascade of crude over-approximating NFAs by Češka
-//! et al., arXiv:1904.10786 (2019); and shipping as Hyperscan's
-//! `HS_FLAG_PREFILTER`, whose matches are documented as a superset for an exact
-//! matcher to confirm.
+//! `L(D) ⊆ L(D')`. The README's Prior Art section carries the rest of the
+//! bibliography.
 
 use alloc::{vec, vec::Vec};
 
@@ -55,6 +52,11 @@ pub const LANES: usize = 16;
 /// so the second is nearly free; a third adds a register chain to a filter that is
 /// already at its selectivity floor.
 pub const MAX_CONJUNCTS: usize = 2;
+
+// Both numbers are spelled out in prose the compiler cannot reach — the README's Design
+// section and this crate's own docs describe a sixteen-lane register and a two-quotient
+// conjunction — so moving either one here is a documentation edit as well as a code one.
+const _: () = assert!(LANES == 16 && MAX_CONJUNCTS == 2);
 
 /// Union-find steps the whole harvest may spend before it stops looking. A partial
 /// harvest is deterministic (pair order is fixed) and still sound — it just sees

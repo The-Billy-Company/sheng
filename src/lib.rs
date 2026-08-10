@@ -24,105 +24,64 @@
 //! # Why it is sound
 //!
 //! A sieve reads a finished DFA — `regex-automata`'s own `dense::DFA` by default, or
-//! anything else satisfying [`Dfa`] — projects it onto its
-//! reachable core (`projection`), and climbs the lattice of
-//! **substitution-property partitions** past the point where language is
-//! preserved (`lattice`) — a partition closed under the transition function
-//! (`p ≡ q` ⟹ `δ(p,b) ≡ δ(q,b)` for every byte), per Hartmanis & Stearns,
-//! *Algebraic Structure Theory of Sequential Machines* (Prentice-Hall, 1966),
-//! ch. 2. A closed partition induces a quotient automaton;
-//! marking a block accepting whenever any member state accepts makes that
-//! quotient recognize a *superset* of the pattern's language. A superset that
-//! rejects therefore proves the original rejects. The quotient's own arithmetic is
-//! re-derived and re-checked before it is trusted, so a partition that is not
-//! actually closed is discarded rather than shipped.
+//! anything else satisfying [`Dfa`] — projects it onto its reachable core
+//! (`projection`), and climbs the lattice of **substitution-property partitions** past
+//! the point where language is preserved (`lattice`). The quotient a closed partition
+//! induces recognizes a *superset* of the pattern's language, so a quotient that
+//! rejects proves the original rejects. `lattice` carries that argument and its
+//! citations; a partition that is not actually closed is discarded rather than shipped.
 //!
 //! # Why it is fast
 //!
 //! A quotient is capped at 16 blocks, which is one SIMD register, so the
-//! transition step is a single byte shuffle with no gather and the accept test is
-//! a running max ([`shuffle`]). That kernel is Langdale's **Sheng** (2018,
-//! shipped in Hyperscan; see
-//! <https://branchfree.org/2018/05/25/say-hello-to-my-little-friend-sheng-a-small-but-fast-deterministic-finite-automaton/>),
-//! pointed at an over-approximating quotient rather than at the real automaton —
-//! which is what lets a machine that must fit in a register front a pattern far
-//! too large to fit in one.
-//!
-//! # Prior art
-//!
-//! The contract — over-approximate, reject early, verify survivors exactly — is
-//! not novel. Luchaup, De Carli, Jha & Bach's DFA-trees (INFOCOM 2014,
-//! [doi:10.1109/INFOCOM.2014.6847977](https://doi.org/10.1109/INFOCOM.2014.6847977))
-//! is the same idea, and their paper calls its shrunk DFAs "a special case of
-//! quotient automaton"; Češka et al. ([arXiv:1904.10786](https://arxiv.org/abs/1904.10786))
-//! cascade crude over-approximating NFAs chosen by a traffic model; Hyperscan's
-//! `HS_FLAG_PREFILTER` has shipped the superset-plus-confirmation contract for
-//! years. What is narrow here is the SP-lattice *harvest* as the source of the
-//! approximation, the register-resident conjunction selection, and the
-//! training-free gate below. Notably, DFA-trees also measured a clear slowdown
-//! when nothing is rejected — the hazard that gate exists to refuse.
+//! transition step is a single byte shuffle with no gather and the accept test is a
+//! running max ([`shuffle`]). That is Langdale's **Sheng** kernel pointed at an
+//! over-approximating quotient rather than at the real automaton — which is what lets a
+//! machine that must fit in a register front a pattern far too large to fit in one.
 //!
 //! # Why it sometimes refuses
 //!
-//! Most patterns get no sieve, and that is the intended behavior. A sieve arms
-//! only when the lattice yields a partition small enough to hold in a register,
-//! coarse enough to be a real abstraction, and **cheaper than the engine it would
-//! front** ([`price`]). That last test is a comparison of two measured per-byte
-//! costs, not a threshold on selectivity — because the decisive question is often
-//! not how much the filter rejects but how little the rival costs. When
-//! `regex-automata` can `memchr` its way through a document, nothing that inspects
-//! every byte can front it profitably, however selective. Such a pattern gets
+//! Most patterns get no sieve, and that is the intended behavior. A sieve arms only
+//! when the lattice yields a partition small enough to hold in a register, coarse
+//! enough to be a real abstraction, and **cheaper than the engine it would front**
+//! ([`price`]) — two measured per-byte costs compared, not a threshold on selectivity,
+//! because the decisive question is often not how much the filter rejects but how
+//! little the rival costs. A pattern `regex-automata` can `memchr` its way through gets
 //! [`BuildError::NotWorthIt`] carrying the arithmetic instead of a slow sieve.
 //!
 //! Selectivity itself is predicted from the quotient's own Markov chain with no
-//! calibration haystack (`selectivity`), under a first-order model of byte-class
-//! persistence ([`prior`]) — because an independent-draw model prices a `k`-byte run
-//! as `p^k` and is wrong by orders of magnitude on real text.
+//! calibration haystack (`selectivity`), under the first-order model of byte-class
+//! persistence [`prior`] documents.
 //!
-//! # What is measured, and where measurements stop applying
+//! # What is measured
 //!
 //! Everything above is arithmetic and instructions; it holds on any machine. The
-//! *decision* rests on two empirical facts that are nobody's constants — how fast a
-//! machine runs three loops, and what the bytes being searched look like — and
-//! [`Policy`] is the single place both live.
-//!
-//! Absolute speed is provably irrelevant: scaling every coefficient of a
-//! [`price::Calibration`] by any positive factor leaves every decision unchanged, so
-//! clock, load and thermal state cancel. What does not cancel is three dimensionless
-//! ratios, and those turn out to differ about twofold between arm64 and x86_64 — in
-//! opposite directions — so [`price::MINTED`] keeps one row per (architecture, kernel)
-//! pair that has actually been measured, and a machine absent from it gets
-//! [`BuildError::Uncalibrated`] rather than another machine's optimism. The shipped
-//! [`prior`] set spans four measured corpora — a polyglot code tree, English prose,
-//! machine-generated JSON, sixteen systems' logs — swept together, because the gate
-//! takes the worst case over them and a caller who has not said what they are
-//! searching should be priced under all four. A caller who *has* narrows to the one
-//! that fits; a corpus none of them describe (DNA, a wire protocol) mints its own.
+//! *decision* rests on two facts that are nobody's constants — how fast a machine runs
+//! three loops, and what the bytes being searched look like — and [`Policy`] is the
+//! single place both live. Scaling a whole [`price::Calibration`] moves no decision, so
+//! a row is a claim about a machine rather than about a clock, and [`price::MINTED`]
+//! keeps one per (operating system, architecture, kernel) triple anybody has measured;
+//! a machine absent from it gets [`BuildError::Uncalibrated`] rather than another
+//! machine's optimism. The shipped [`prior`] chains are swept together at their worst
+//! case, since a caller who has not said what they are searching should be priced under
+//! all of them; one who *has* narrows to the chain that fits.
 //!
 //! # What this crate needs to exist
 //!
-//! The sieve is arithmetic and sixteen bytes of table, so it asks for very little and
-//! says so in its feature set rather than in a paragraph.
-//!
 //! Scanning needs **no operating system**. [`Sieve::refutes`] reads a [`Quotient`]'s
-//! rows and, where one was elected, a [`Skip`] — whose narrowest escape sets go
-//! through `memchr`, this crate's one unconditional dependency and itself `no_std`.
-//! Pricing needs none either: every float operation in the crate is `+ - * /` and a
-//! comparison, so there is no `powf`, no `libm`, and no math library behind either.
-//! Even the runtime x86 probes read `CPUID` — and `XCR0`, for the widths whose upper
-//! halves an operating system has to promise to preserve — directly instead of asking
-//! `std::arch::is_x86_feature_detected!`, because they are the same questions asked of
-//! the same registers. `--no-default-features` is therefore a `no_std` build;
-//! an allocator is still required, because the tables are [`Vec`]-shaped.
+//! rows and, where one was elected, a [`Skip`] — whose narrowest escape sets go through
+//! `memchr`, this crate's one unconditional dependency and itself `no_std`. Pricing
+//! needs none either: every float operation in the crate is `+ - * /` and a comparison,
+//! and even the runtime x86 probes read `CPUID` and `XCR0` directly rather than through
+//! `std::arch::is_x86_feature_detected!`.
 //!
-//! Building is where the dependency lives, and only there. A pattern has to be
-//! *parsed*, and this crate deliberately does not own a parser — the soundness
-//! argument above is about the automaton that will run the confirming
-//! search, so reading that engine's automaton is the whole point. The default
-//! `regex-automata` feature supplies both the parser and the [`Dfa`] impl.
-//! Turn it off and the pattern constructors go away, leaving [`Sieve::of_dfa`]
-//! over any automaton a caller can walk. That split falls where the code already
-//! divided: nothing in `regex-automata` was ever on the scan path.
+//! Building is where the dependency lives, and only there, because a pattern has to be
+//! *parsed* and the soundness argument above is about the automaton that will run the
+//! confirming search. The default `regex-automata` feature supplies both the parser and
+//! the [`Dfa`] impl; `--no-default-features` is therefore a `no_std` build, and the
+//! pattern constructors go with it, leaving [`Sieve::of_dfa`] over any automaton a
+//! caller can walk. An allocator is still required, because the tables are
+//! [`Vec`]-shaped.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 // Nightly-only, and set by nothing but docs.rs (see `[package.metadata.docs.rs]`):
@@ -139,6 +98,10 @@ mod lattice;
 pub mod price;
 pub mod prior;
 mod projection;
+#[cfg(feature = "regex-automata")]
+mod relax;
+#[cfg(feature = "regex-automata")]
+mod screen;
 mod selectivity;
 pub mod shuffle;
 mod skip;
@@ -146,8 +109,11 @@ mod skip;
 pub use dfa::Dfa;
 pub use error::BuildError;
 pub use lattice::{MAX_CONJUNCTS, Quotient, harvest};
-pub use price::Residency;
-pub use projection::{Decline, Projection};
+pub use price::{Bypass, Residency, Rival};
+pub use projection::{Decline, MAX_CORE_STATES, Projection};
+#[cfg(feature = "regex-automata")]
+#[cfg_attr(docsrs, doc(cfg(feature = "regex-automata")))]
+pub use screen::Screen;
 pub use selectivity::worst_case;
 pub use skip::{Instrument, Skip};
 
@@ -311,8 +277,99 @@ pub struct Policy<'a> {
     pub freq: &'a [f64; 256],
     /// Nominal haystack length the one-time survival cost is amortized over.
     pub len: f64,
+    /// What one confirming pass costs — the gate's whole right-hand side, and the term
+    /// that decides more verdicts than selectivity does.
+    ///
+    /// [`Rival::Engine`] by default, which reads the price off the automaton that will
+    /// run the confirming search. A caller whose survivors cost something other than a
+    /// regex scan — fetched over a network, put through OCR, embedded, indexed — says so
+    /// here. [`Rival`] carries which of its two ways to say it to prefer, and which
+    /// confirms are expensive enough to be worth saying at all.
+    pub rival: Rival,
+    /// What the caller would run **instead** of this sieve, and therefore the baseline
+    /// the gate has to beat.
+    ///
+    /// [`Bypass::Engines`] by default, which is the engine the caller already holds,
+    /// once per rival. Under [`Rival::Engine`] that is the same number on both sides and
+    /// changes nothing; under a stated rival it is what stops the gate comparing a sieve
+    /// against a pipeline nobody would run. [`Bypass`] carries the arithmetic, and it is
+    /// worth reading before reaching for [`Rival::Walks`] — the two terms are the same
+    /// conversation from opposite ends, and stating only the first is how a sieve arms at
+    /// two orders of magnitude behind the engine it never got compared to.
+    pub bypass: Bypass,
+    /// How many searches one refutation lets the caller skip.
+    ///
+    /// One by default, which is the shape the rest of the arithmetic was written for:
+    /// one pattern, one engine, one document. A caller running a rule slate over each
+    /// document pays for the pre-pass **once** and for verification once per pattern, and
+    /// dividing through, the gate becomes
+    ///
+    /// ```text
+    /// (sieve/rivals  +  survival * rival) * (1 + MARGIN)   <   rival
+    /// ```
+    ///
+    /// so the sieve's own price — the term that declines most near-parity patterns —
+    /// falls away as the slate grows, and arming turns on selectivity. A pattern that
+    /// misses by a hair at one rival clears comfortably at two.
+    ///
+    /// # How much this can be worth, which is less than it looks
+    ///
+    /// All of it, at every slate size, is bounded by [`price::CostFact::ceiling`]: the
+    /// term removes `sieve/rivals` and touches nothing else, so the speedup climbs to
+    /// `1 / survival` and stops. That bound is what makes the fan-out narrow in practice
+    /// rather than transformative — a filter selective enough for the ceiling to be large
+    /// is usually already arming at one rival, and a filter marginal enough to need the
+    /// fan-out is marginal because its survival is high, which is the thing the fan-out
+    /// cannot move. Measured over 4 KiB documents, the band where this term flips a
+    /// verdict is roughly one to one-and-a-half times, and the ceiling is worth reading
+    /// before assuming a longer slate is the answer.
+    ///
+    /// It is also bounded by what a single register can cover. One quotient has to
+    /// over-approximate every member at once, and a union of even two literal-free rules
+    /// routinely harvests nothing at all while four exceeds [`MAX_CORE_STATES`] — so the
+    /// automaton this count is declared against is usually a deliberately coarse superset
+    /// of one *family* of rules, not the slate's union. `tests/slate.rs` measures where
+    /// that wall is.
+    ///
+    /// # What a caller has to be true for this to be honest
+    ///
+    /// Two obligations, and neither is checkable from here:
+    ///
+    /// * **One refutation really must skip them all.** The sieve has to be built from an
+    ///   automaton whose language contains every pattern's — a union automaton
+    ///   (`dense::DFA::new_many`) is the direct way, via [`Sieve::of_superset_with`].
+    ///   A sieve built from one pattern of the slate proves nothing about the others.
+    /// * **The priced rival should be the *cheapest* of them.** This term multiplies one
+    ///   representative per-byte price by a count, and the engines in a real slate do
+    ///   not all cost the same — one with a rare lead byte is an order of magnitude
+    ///   cheaper than one committed to a walk. Underestimating the rival can only make
+    ///   the sieve decline ([`price`]), so pricing off the cheapest keeps the whole
+    ///   inequality erring the way every other term here errs.
+    pub rivals: usize,
     /// Whether to enforce the worth test at all.
     pub gate: Gate,
+    /// Whether a pattern-string build may also try a **counter-relaxed** superset of
+    /// the pattern, and keep it if the gate prices it better.
+    ///
+    /// On for callers, because the alternative is refusing an entire population of
+    /// patterns for a reason that has nothing to do with whether a filter would pay:
+    /// a bounded repeat costs a DFA state per count, so `{16}` alone can put the
+    /// reachable core past [`MAX_CORE_STATES`] before a single coefficient is read.
+    /// Relaxing the bound is sound in the one direction that matters — see
+    /// [`Dfa`] for the obligation and `src/relax.rs` for why the transform meets it —
+    /// and the strict automaton still prices the rival and still confirms every
+    /// survivor.
+    ///
+    /// A seam rather than a silent improvement, for the same reason [`Policy::skip`]
+    /// is one: relaxation can also *cost* selectivity, so the two candidates are
+    /// priced against each other and this is how a caller measures that exchange
+    /// instead of taking it on faith. Turning it off reproduces the decline a strict
+    /// build would have reported.
+    ///
+    /// Consulted only by the pattern-string constructors, since it is a transform on a
+    /// *parse*. A caller on [`Sieve::of_dfa_with`] holds the automaton already and can
+    /// hand a superset of it to [`Sieve::of_superset_with`] directly.
+    pub relax: bool,
     /// Whether a conjunct may trade the composition kernel for a `skip` loop when
     /// the calibration says the skip is cheaper.
     ///
@@ -342,7 +399,11 @@ impl Policy<'_> {
             chains: &prior::DEFAULT_CHAINS,
             freq: &prior::SOURCE_BYTES,
             len: price::NOMINAL_LEN,
+            rival: Rival::Engine,
+            bypass: Bypass::Engines,
+            rivals: 1,
             gate: Gate::Worth,
+            relax: true,
             skip: true,
         }
     }
@@ -386,19 +447,57 @@ impl Sieve {
 
     /// Build a sieve for `pattern` under a caller-supplied [`Policy`] — the seam for
     /// a machine or a corpus this crate never measured.
+    ///
+    /// Two candidates are assembled and priced, not one, whenever [`Policy::relax`] is
+    /// on and the pattern carries a repetition bound: the strict automaton, and a
+    /// counter-relaxed superset of it. Both are sound refuters of the same pattern —
+    /// only the strict one is ever asked for the rival's price — so the choice between
+    /// them is purely economic and is made by the arithmetic the gate already uses.
+    /// Neither direction is assumed: relaxation converts a whole population of
+    /// patterns from *never priced* to priced, and it can also pass so much more that
+    /// the strict filter wins on merit.
     pub fn with(pattern: &str, policy: &Policy<'_>) -> Result<Self, BuildError> {
-        use alloc::string::ToString;
+        Self::of_pattern(pattern, &relax::strict(pattern)?, policy)
+    }
 
-        use regex_automata::dfa::dense;
-        use regex_automata::nfa::thompson;
-        use regex_automata::util::syntax;
+    /// [`Sieve::with`] for a caller who has already built the pattern's own automaton
+    /// and is going to keep it — [`Screen`], which needs the same automaton afterwards
+    /// to confirm with, so building it twice would be a second determinization for a
+    /// result it already holds.
+    ///
+    /// `strict` must be the automaton for `pattern`. It is not re-derived here, and a
+    /// mismatched pair would price one search and refute for another.
+    pub(crate) fn of_pattern(
+        pattern: &str,
+        strict: &regex_automata::dfa::dense::DFA<alloc::vec::Vec<u32>>,
+        policy: &Policy<'_>,
+    ) -> Result<Self, BuildError> {
+        let exact = Self::assembled(strict, strict, policy);
+        // Priced against `strict`: the relaxed automaton describes what the *filter*
+        // may pass, and the engine that will run behind it is still the strict one.
+        // Reading the rival off the relaxed automaton would price a search nobody
+        // is going to run — and would price it too high, which argues for arming.
+        let loose = policy
+            .relax
+            .then(|| relax::loosened(pattern))
+            .flatten()
+            .map(|loose| Self::assembled(&loose, strict, policy));
 
-        let dfa = dense::Builder::new()
-            .syntax(syntax::Config::new().utf8(false))
-            .thompson(thompson::Config::new().utf8(false))
-            .build(pattern)
-            .map_err(|e| BuildError::Automaton(e.to_string()))?;
-        Self::of_dfa_with(&dfa, policy)
+        // Lower total, not higher speedup, and they are the same test: both candidates
+        // are weighed against the identical rival. Ties go to the strict automaton,
+        // whose fallthrough is a claim about the pattern the caller actually wrote.
+        match (exact, loose) {
+            (Ok(exact), Some(Ok(loose))) if loose.cost.total() < exact.cost.total() => loose,
+            (Ok(exact), _) => exact,
+            // The strict automaton's own shape ruled it out — a core wider than the
+            // cap is the ordinary way a counted repeat arrives here — and the relaxed
+            // one did not. This is the case the transform exists for.
+            (Err(_), Some(Ok(loose))) => loose,
+            // No second candidate, or none that built either: report the strict
+            // automaton's refusal, which is the one about the caller's own pattern.
+            (Err(why), _) => return Err(why),
+        }
+        .admitted(policy)
     }
 }
 
@@ -417,6 +516,57 @@ impl Sieve {
     /// [`Sieve::of_dfa`] with a [`Policy`] the caller assembled rather than one
     /// [`Policy::new`] filled in.
     pub fn of_dfa_with<D: Dfa>(dfa: &D, policy: &Policy<'_>) -> Result<Self, BuildError> {
+        Self::of_superset_with(dfa, dfa, policy)
+    }
+
+    /// Build the sieve from `filter` while pricing — and intending to front — `rival`.
+    ///
+    /// The obligation is the one [`Dfa`] already states, and this is the constructor
+    /// that makes it a parameter instead of an aside: **`filter`'s language must
+    /// contain `rival`'s**. Hand over a narrower automaton and a refutation stops
+    /// being a proof; nothing here can check it.
+    ///
+    /// Why it is worth a second constructor: a superset is often the only automaton
+    /// small enough to sieve at all. A bounded repeat spends a DFA state per count, so
+    /// `AKIA[0-9A-Z]{16}` puts the reachable core past [`MAX_CORE_STATES`] while
+    /// `AKIA[0-9A-Z]+` — whose language strictly contains it — is a handful of states
+    /// and a sharper quotient. [`Sieve::with`] performs exactly that exchange for
+    /// pattern strings; this is the same seam for a caller who builds automata
+    /// themselves, including on `no_std` where there is no parser to relax.
+    ///
+    /// The two automata are asked different questions, and that is the whole design:
+    /// `filter` supplies the states a quotient is harvested from and the fallthrough
+    /// the gate believes, `rival` supplies [`Dfa::accelerator`] and therefore the price
+    /// the sieve has to beat. Reading the rival's price off a relaxed automaton would
+    /// price a search nobody is going to run.
+    pub fn of_superset_with<F: Dfa, R: Dfa>(
+        filter: &F,
+        rival: &R,
+        policy: &Policy<'_>,
+    ) -> Result<Self, BuildError> {
+        Self::assembled(filter, rival, policy)?.admitted(policy)
+    }
+
+    /// The worth test, applied once to a finished candidate.
+    ///
+    /// Separate from [`Sieve::assembled`] because [`Sieve::with`] prices two candidates
+    /// against each other before either is admitted, and a gate applied per candidate
+    /// would discard the better one for failing a test the pair had not yet been
+    /// compared on.
+    fn admitted(self, policy: &Policy<'_>) -> Result<Self, BuildError> {
+        if policy.gate == Gate::Worth && !self.cost.pays() {
+            return Err(BuildError::NotWorthIt(self.cost));
+        }
+        Ok(self)
+    }
+
+    /// Everything except the worth test: preconditions, projection, harvest, lanes,
+    /// and the arithmetic that would decide.
+    fn assembled<F: Dfa, R: Dfa>(
+        filter: &F,
+        rival: &R,
+        policy: &Policy<'_>,
+    ) -> Result<Self, BuildError> {
         // Refuse before doing any work rather than after: an unmeasured machine cannot
         // be talked into a speedup by a well-shaped automaton.
         if policy.gate == Gate::Worth && !policy.calibration.is_measured(policy.residency) {
@@ -436,7 +586,7 @@ impl Sieve {
                 floor: price::VALIDITY_FLOOR,
             });
         }
-        let core = projection::Projection::of(dfa).map_err(BuildError::Shape)?;
+        let core = projection::Projection::of(filter).map_err(BuildError::Shape)?;
         let quotients = lattice::harvest(&core);
         if quotients.is_empty() {
             return Err(BuildError::NoQuotient);
@@ -456,15 +606,15 @@ impl Sieve {
                 lane
             })
             .collect();
+        let (rival, bypass) = prices(rival, policy);
         let cost = CostFact {
             fallthrough,
             len: policy.len,
             sieve,
-            rival: rival_cost(dfa, policy),
+            rival,
+            rivals: policy.rivals,
+            bypass,
         };
-        if policy.gate == Gate::Worth && !cost.pays() {
-            return Err(BuildError::NotWorthIt(cost));
-        }
         Ok(Self { lanes, cost })
     }
 
@@ -519,10 +669,24 @@ impl Sieve {
     }
 }
 
-/// What the engine costs per byte, asked of the engine rather than assumed.
+// The README's Rust blocks, held to the compiler. `cfg(doctest)` is set only while
+// rustdoc collects doctests, so this never reaches the library or the rendered docs —
+// which is the point: including the README at the crate root would duplicate every
+// claim to buy the one thing worth buying, a README snippet that fails a test rather
+// than drifting quietly, as every `Sieve` constructor in there once did.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+pub struct Readme;
+
+/// The gate's two right-hand-side prices per byte — what one confirming pass costs, and
+/// what the caller's cheapest exact alternative costs — both asked of the rival rather
+/// than assumed.
 ///
-/// [`Dfa::accelerator`] on the start state is the engine stating which bytes it
-/// will `memchr` past; an empty answer means it is committed to a per-byte walk.
+/// Answered together because they read the same fact off the same automaton, and asking
+/// twice would walk the start state twice for one accelerator. The automaton is consulted
+/// only where [`Policy::rival`] or [`Policy::bypass`] says the price *is* the automaton's;
+/// [`Rival`] and [`Bypass`] own every other case, including what to charge when a DFA will
+/// not name a start state to read an accelerator from.
 ///
 /// Priced under the policy's byte marginals alone, where [`selectivity::worst_case`]
 /// sweeps every chain — and the asymmetry is deliberate rather than an oversight.
@@ -536,28 +700,15 @@ impl Sieve {
 /// Taking the worst case of one and the realistic case of the other is not mixing
 /// worlds: it is pessimism where the sieve makes a promise and realism where the
 /// rival does.
-// The README's Rust blocks, held to the compiler. `cfg(doctest)` is set only while
-// rustdoc is collecting doctests, so this item is never built into the library and
-// never reaches the rendered documentation — which is the point: the module docs above
-// are the crate's own argument and the README is a second telling of it for a different
-// reader, so `#![doc = include_str!(..)]` at the crate root would duplicate every claim
-// to buy this. What is bought is the one thing the two tellings must share: a README
-// snippet that stops compiling fails a test rather than sitting there as a paragraph
-// nobody re-ran. Every `Sieve` constructor in there took one fewer argument than it does
-// now, and nothing said so.
-#[cfg(doctest)]
-#[doc = include_str!("../README.md")]
-pub struct Readme;
-
-fn rival_cost<D: Dfa>(dfa: &D, policy: &Policy<'_>) -> f64 {
-    let Some(start) = dfa.start() else {
-        // Cannot tell what the engine will do, so assume the best case for it and let
-        // the sieve stand down.
-        return policy.calibration.dfa_skip[policy.residency as usize];
-    };
-    policy
-        .calibration
-        .rival_per_byte(dfa.accelerator(start), policy.freq, policy.residency)
+fn prices<D: Dfa>(dfa: &D, policy: &Policy<'_>) -> (f64, f64) {
+    let accelerator = dfa.start().map(|start| dfa.accelerator(start));
+    let (cal, freq, at) = (&policy.calibration, policy.freq, policy.residency);
+    (
+        policy.rival.per_byte(cal, accelerator, freq, at),
+        policy
+            .bypass
+            .per_byte(cal, accelerator, freq, at, policy.rivals),
+    )
 }
 
 // The thread promise, held by the compiler instead of by inference.
@@ -590,6 +741,8 @@ const _: () = {
     // The rest of the public surface, in the order the re-exports above declare it.
     shared::<Quotient>();
     shared::<Residency>();
+    shared::<Rival>();
+    shared::<Bypass>();
     shared::<Decline>();
     shared::<Projection>();
     shared::<Instrument>();

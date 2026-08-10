@@ -15,8 +15,13 @@ when it wouldn't pay — the common, intended outcome.
 
 - [Installation](#installation)
 - [Platforms](#platforms)
+  - [Everywhere else](#everywhere-else)
 - [Usage](#usage)
 - [The Cases That Pay](#the-cases-that-pay)
+  - [When the confirm is not a regex](#when-the-confirm-is-not-a-regex)
+  - [When the rival is the engine](#when-the-rival-is-the-engine)
+  - [A slate is not a pattern](#a-slate-is-not-a-pattern)
+  - [Bounded repeats no longer refuse unpriced](#bounded-repeats-no-longer-refuse-unpriced)
 - [The Wrong Tool for the Job](#the-wrong-tool-for-the-job)
 - [Calibration](#calibration)
 - [Layout](#layout)
@@ -82,16 +87,13 @@ against real source text.
 Which kernel a machine _runs_ is a narrower question than which it can execute,
 and deliberately so: dispatch elects the **cheapest kernel this machine's own
 calibration row measured**, so an unminted kernel is inert rather than trusted.
-Cheapest, not widest — a wider register is a guess about speed, and on x86_64 it
-is a guess the mint has refuted. On the one runner offering all three rungs,
-AVX-512 costs 0.458 ns/B against AVX2's 0.376 and SSSE3's 0.437: the 64-byte
-shuffle is the slowest of the three, and it is perfectly correct, which is why a
-width prior cannot see it. It is priced and simply not elected there. A kernel
-nobody has priced anywhere is named in [`price::DORMANT`][dormant] with the
-reason — a list whose entries are deleted by
+Cheapest, not widest — a wider register is a guess about speed, and on the one
+runner offering all three x86_64 rungs the mint refuted it: the 64-byte shuffle
+is the slowest of the three, perfectly correct and simply not elected. A kernel
+nobody has priced on a given machine is named in [`price::DORMANT`][dormant] with
+the reason, and its entries are deleted by
 [`.github/workflows/mint.yml`](.github/workflows/mint.yml) rather than by
-argument, and which is down to `wasm32`'s SIMD128. See
-[Calibration](#calibration).
+argument. See [Calibration](#calibration).
 
 `wasm32` is a seventh target and the one exception to the paragraph above, since
 a guest has no `CPUID` to probe: `-C target-feature=+simd128` chooses between the
@@ -100,19 +102,82 @@ SIMD128 kernel and the scalar one at compile time. CI runs the differential unde
 the runtime and the host under it as much as about the guest — so a sieve
 declines on `wasm32` unless the caller supplies its own `Calibration`.
 
+### Everywhere else
+
+Nothing above is a portability claim, and this is the part that used to read like
+one. The scan path compiles and runs on any target Rust supports — `riscv64`,
+`powerpc64`, `s390x`, `loongarch64` — through `Kernel::Scalar`, which is the
+reference composition pass and needs no vector instruction at all. What those
+machines lacked was not a kernel but a **price**: no row in `price::MINTED`, so
+`BuildError::Uncalibrated` on every pattern, so an inert dependency.
+
+That is now a call rather than a wait for someone to ship a row:
+
+```rust,no_run
+# let corpus: Vec<Vec<u8>> = Vec::new();
+use sheng::price::Calibration;
+use sheng::{Policy, Screen};
+
+// A sample of the documents this process actually searches.
+let sample: Vec<&[u8]> = corpus.iter().map(Vec::as_slice).collect();
+let mine = Calibration::measure(&sample)?;
+
+let mut policy = Policy::new(mine.regime().expect("a measured row names one regime"));
+policy.calibration = mine;
+let screen = Screen::with(r"(?-u)AKIA[0-9A-Z]{16}", &policy)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+A row taken this way is _better_ evidence than a shipped one on two counts — it
+describes this machine rather than one that shares its `(os, arch, kernel)`
+triple, and it is measured over the caller's own bytes rather than one of four
+shipped corpora. What it gives up is reproducibility, since a shipped row was
+taken on an idle CI runner. `Bench` refuses rather than guesses when the sample
+is too small to time honestly, which is the case that would otherwise return
+a plausible row full of clock granularity.
+
+`cargo run --release --example mint` is the same measurement formatted for pasting
+into `price::MINTED`, which is how one caller's fix becomes everybody's. Both go
+through `price::Bench`; the example adds only the `const` literal and the
+per-kernel sweep.
+
 [dormant]: https://docs.rs/sheng/latest/sheng/price/constant.DORMANT.html
 
 ## Usage
 
-Build the sieve once, then ask it about every document:
+`Screen` is the front door, and it cannot decline. It builds a sieve, keeps it if
+one pays, and runs the engine alone if not:
+
+```rust
+# let documents: [&[u8]; 0] = [];
+use sheng::{Residency, Screen};
+
+// `Residency` is the one input the crate cannot probe and refuses to guess:
+// whether these bytes arrive from cache or from main memory. See Calibration.
+let screen = Screen::new(r"(?-u)#[0-9a-fA-F]{6}", Residency::Memory)?;
+
+for doc in documents {
+    if screen.is_match(doc) {
+        // ... handle the document that might match ...
+    }
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Identical in answer to running `regex-automata` alone; the only difference is how
+much work it does to get there. The one error it returns is a pattern that does
+not parse, so the ordinary decline — this filter would not pay on this machine —
+costs the caller no code at all. `screen.declined()` still hands over the refusal
+and its arithmetic for anyone who wants to read it.
+
+`Sieve` is the same thing without the fallback, for a caller who already has a
+matcher to fall back to:
 
 ```rust
 # fn confirm_with_the_real_engine(_doc: &[u8]) {}
 # let documents: [&[u8]; 0] = [];
 use sheng::{Residency, Sieve};
 
-// `Residency` is the one input the crate cannot probe and refuses to guess:
-// whether these bytes arrive from cache or from main memory. See Calibration.
 let Ok(sieve) = Sieve::new(r"#[0-9a-fA-F]{6}", Residency::Memory) else {
     return; // no sieve; just run the engine over everything
 };
@@ -127,7 +192,7 @@ for doc in documents {
 
 A `BuildError` always means the same thing: run unfiltered. `NotWorthIt`, the
 usual variant, carries the arithmetic that declined it — selectivity, survival
-rate, both per-byte prices.
+rate, both per-byte prices, and the speedup no price could have passed.
 
 A `Sieve` is immutable with no scan state, so one instance serves every document
 and thread with no cloning. Hand it a DFA you already built to share one
@@ -146,19 +211,154 @@ let sieve = Sieve::of_dfa(&dfa, Residency::Memory);
 
 Sheng pays when one pattern crosses many documents and most don't match — a
 corpus scan, a log sweep, a rule slate over a stream. The gate answers in a
-fraction of a millisecond. Three properties arm a pattern:
+fraction of a millisecond, and what it answers turns on three things in this
+order: **what the caller would otherwise have done**, then how short the records
+are, and only then how good the filter is. The first is where most of the room
+is, and it is also where most of the mistakes are.
 
-- **A distinctive alphabet** — `[0-9]{3}-[0-9]{4}` is the archetype; digits and
-  a hyphen refute almost every position in prose or code.
-- **A rival with no cheap accelerator** — `panic!\(` is the other face; its
-  `memchr` lead byte is too common to skip past.
-- **Documents in the low kilobytes** — survival rises with length, so a filter
+### When the confirm is not a regex
+
+A refutation's product is not a faster scan. It is a proof that a document needs
+**no further work**, and what that is worth is set entirely by what the further
+work would have been. So a confirm that extracts text from a PDF, embeds the
+document, or fetches it over a network — hundreds to thousands of times a DFA
+walk — sounds like it should change everything, and `Policy::rival` is where you
+would say so.
+
+It almost never does, and the reason is the most useful thing on this page. The
+work a refutation saves is the work you would _otherwise have done_, and a caller
+holding a regex would not put every document through an OCR pass. They would run
+the engine first — it decides the same question exactly, for a hundredth of the
+price — and pay the extraction only on documents that truly match. Comparing a
+sieve against the OCR is comparing it against a pipeline nobody runs. So the gate
+takes the cheaper of the two, and `Policy::bypass` is where you say what you have:
+
+```rust
+use sheng::{Bypass, Policy, Residency, Rival, Sieve};
+
+let mut policy = Policy::new(Residency::Memory);
+policy.rival = Rival::Walks(512.0); // a survivor costs ~512 DFA walks per byte
+// ...but the engine can screen for it, which is the default and the usual truth:
+assert_eq!(policy.bypass, Bypass::Engines);
+let sieve = Sieve::with(r"(?-u)AKIA[0-9A-Z]{16}", &policy);
+```
+
+`cargo run --release --example census` sweeps 31 patterns people really grep for
+and prints all of this. On the machine this paragraph was written on, **11 of 31
+arm in front of the engine, and 11 in front of that 512-walk confirm** — the same
+eleven, because the engine is still there to run first. Take the screen away with
+`Bypass::Absent` and **24 of 31** arm.
+
+That last number is the honest value of a costly rival, and it belongs only to a
+caller who genuinely cannot decide the question more cheaply where the sieve runs.
+Screening packets against rules whose matches only exist in a reassembled flow is
+the case; "my confirm is slow" is not.
+
+Nothing here manufactures selectivity either. As the rival's price grows the
+inequality converges on `survival * (1 + MARGIN) < 1`, so `CostFact::ceiling` —
+`1 / survival` — is the most any price or slate size can ever reach, and a filter
+keeping more than `1/(1 + MARGIN)` of documents is finished. Of the seven that
+still declined above, six are terminal in exactly that sense; the census prints
+the split, and `NotWorthIt` carries the ceiling so a single decline says whether
+tuning is worth the afternoon.
+
+Costs to check yourself before reaching for this: a walk is 1.3–2.1 ns/byte on
+the minted machines, so zstd or gzip (1–3 ns/byte), AES with hardware support
+(under 1), and JSON parsing (1–3) are all _within a small multiple of the
+engine_ and change nothing. `Rival` and `Bypass` document the arithmetic.
+
+### When the rival is the engine
+
+Then the bar is `memchr` and most patterns correctly lose to it. What arms:
+
+- **No usable literal, and an alphabet that refutes.** `[A-Z][a-z]+Service` and
+  `(alpha|beta|gamma)` are `examples/survey.rs`'s decided winners over 31 MiB of
+  real source.
+- **A rival with no cheap accelerator.** `panic!\(` is the marginal face of
+  this: its `memchr` lead byte is common enough that the sieve competes, and
+  close enough that the survey often cannot separate the two arms at all.
+- **Documents in the low kilobytes.** Survival rises with length, so a filter
   that clears a short document may keep a long one on a single surviving
   position.
 
 A rare lead byte is the reliable, correct decline: `regex-automata` can cross a
 document via `memchr` an order of magnitude faster than the sieve walks it.
-Nothing that inspects every byte beats a skip that cheap.
+Nothing that inspects every byte beats a skip that cheap. A distinctive alphabet
+is _not_ on its own enough to overturn that — `[0-9]{3}-[0-9]{4}` refutes almost
+every position in prose or code and still declines, because rejecting positions
+is not rejecting documents and the digits cluster where dates and versions are.
+
+### A slate is not a pattern
+
+Many rules over each document is a different economic proposition, and it takes
+a term in the gate to say so. The pre-pass is paid once per document while
+verification is paid once per pattern, so with `n` rivals the inequality divides
+through to
+
+```text
+(sieve/n  +  survival * rival) * (1 + MARGIN)   <   rival
+```
+
+and the sieve's own price — what declines most near-parity patterns — falls away
+as the slate grows. `Policy::rivals` is where the count goes. Two obligations come
+with it and neither is checkable from inside the crate: the sieve has to be built
+from an automaton whose language contains **every** rule's —
+`Sieve::of_superset_with` is where you hand one over — and the priced rival
+should be the _cheapest_ of
+them, since underestimating the rival can only make the sieve decline.
+
+This is the workload the prior art below is about, and it is the one this crate
+described as its best case for a long time without ever measuring it. Measured
+(`cargo test --release --test slate -- --nocapture`), the term is real and it is
+bounded three ways, all worth knowing before you plan around it.
+
+**If the rules have literals, the union is already the answer.** Sixty-four
+literal-prefixed rules measure 11.96 ns/B as sixty-four separate engines and
+**0.12 as one union** — the fan-out almost exactly, because the union keeps a
+multi-literal accelerator and still pays one pass's price. A sieve in front of that
+has nothing to retire, and `Bypass::Slate` is how you tell the gate so. What bounds
+the union is construction, not throughput: the dense table goes 12.6 KiB → 4.5 MiB
+→ 65 MiB at 1, 64 and 256 rules, and the build 0.2 ms → 0.75 s → 114 s, with no
+determinization at all past 256 inside a gibibyte.
+
+**A slate's own union stops being sieveable almost immediately.** One quotient has
+to over-approximate every member at once. Over eight literal-free rules of the kind
+a secret scanner is made of, the union's reachable core passes
+`MAX_CORE_STATES` by the seventh, and the lattice stops finding a register-sized
+closed partition at the _second_. A 16-block quotient of 1,200 rules is not a
+filter that lost on price; it is a filter that does not exist. What does exist
+is a deliberately coarse skeleton of one _family_ —
+`[0-9]+[-./:][0-9]+[-./:][0-9]+` contains every SSN, card number,
+date, timestamp and version string in nine states rather than the several hundred
+their union needs. Choosing one is a modeling problem the crate cannot do for you,
+which is exactly why `of_superset_with` takes an automaton and not a pattern list.
+
+**Every slate size converges on the same ceiling.** The fan-out removes `sieve/n`
+and touches nothing else, so the arithmetic tends to `1 / survival` and no rule
+count passes it. That makes **record length**, not slate size, the term that
+decides: survival compounds over positions, so the family skeleton above is worth
+at most 11.3x over 256-byte records, 3.2x over 1 KiB, and 1.00x over 16 KiB — the
+same filter, the same slate, three different answers. The slate regime is packets,
+log lines and short records. Over large documents there is nothing left to win.
+
+### Bounded repeats no longer refuse unpriced
+
+A counted repeat spends a DFA state per count, so `AKIA[0-9A-Z]{16}` put the
+reachable core past `MAX_CORE_STATES` and was refused before a single coefficient
+was read. That is the worst kind of refusal — a _ceiling_ rather than a verdict,
+reached for a reason that has nothing to do with whether a filter would pay.
+
+`Policy::relax` (on by default) relaxes those bounds before projecting, which is
+sound in the one direction that matters: dropping a bound yields a **superset**
+language, and a sieve built from a superset still never rejects a document that
+matches. The strict automaton still prices the rival and still confirms every
+survivor, and the two candidates are priced against each other so relaxation is
+never taken when it costs more selectivity than it buys structure.
+
+Measured over the census population: **14 of 31 patterns were refused
+structurally with relaxation off, 1 with it on.** `cargo run --release --example
+census` prints that pair, so the claim is an instrument reading rather than a
+recollection.
 
 ## The Wrong Tool for the Job
 
@@ -189,24 +389,27 @@ policy.len = 65_536.0; // documents larger than the 4 KiB nominal
 let sieve = Sieve::with(r"\bTODO\b", &policy);
 ```
 
-Mint the rest with `cargo run --release --example mint`, pointing
-`$SHENG_CORPUS` at your real bytes. An unmeasured machine gets
-`price::UNMEASURED`, declines every pattern, and says so through
-`BuildError::Uncalibrated` — fail-closed, since guessing another machine's
-silicon is deliberately not offered.
+An unmeasured machine gets `price::UNMEASURED`, declines every pattern, and says
+so through `BuildError::Uncalibrated` — fail-closed, since guessing another
+machine's silicon is deliberately not offered.
+
+It is also the one refusal a caller can lift from where they stand.
+`Calibration::measure(&docs)` takes a row over the caller's own documents in
+seconds and goes straight into `Policy::calibration`; see
+[Everywhere else](#everywhere-else). `cargo run --release --example mint` is the
+same measurement with `$SHENG_CORPUS` pointed at your real bytes, formatted as a
+`const` to paste — which is what turns one machine's fix into a shipped row. Both
+call `price::Bench`, so the coefficient a runtime row measures and the one a
+pasted row publishes cannot drift apart.
 
 One run prints a row for every kernel the silicon can execute, not just the one
 dispatch chose, and that is what makes a new instruction set reachable at all:
 since dispatch declines a kernel with no row, a mint that followed dispatch would
 be waiting on the measurement the measurement was waiting on. Pasting a row in is
 what wakes a kernel, and it comes with a deletion — `price::DORMANT` names the
-same machine and kernel and the reason, held to `price::MINTED` in both directions
-by a test, so a row landed there fails the build until the line here is gone. A
-kernel nobody has minted yet and a kernel whose row somebody dropped are otherwise
-the same absence, and the second one costs a machine its throughput while every
-test still passes. It is keyed on the machine because a fleet is not one:
-`linux`/`x86_64` covers runners with and without AVX-512, so that kernel is
-unpriced there and priced on `windows`/`x86_64`.
+same machine and kernel and the reason, held to `price::MINTED` in both
+directions by a test, so a row landed there fails the build until the line there
+is gone.
 
 ## Layout
 
@@ -274,8 +477,9 @@ Contrapositive: if a quotient accepts nowhere in the haystack, no match exists �
 a survivor proves nothing, a rejection proves everything.
 
 A conjunction of quotients is sound and strictly stronger than either — capped
-at 2, since a third rarely earns its shuffle. Every partition is re-derived and
-re-checked; one that isn't actually closed is discarded, not shipped.
+at `MAX_CONJUNCTS`, since a third rarely earns its shuffle. Every
+partition is re-derived and re-checked; one that isn't actually closed is
+discarded, not shipped.
 
 ### The Parallel Kernel
 
@@ -288,18 +492,16 @@ Hold the transition function in the register instead, seeded with the identity
 bytes, lane `i` is the block that run would reach from block `i` — all sixteen
 answers for the price of one.
 
-That frees the haystack to split into four independent slices running four
-chains at once, four because that's about how many it takes to saturate the
-shuffle port. The parallel form is several times the serial one across the
-survey slate — and every size gets faster, since a document shorter than one
-slice re-derives its own stride instead of falling back to scalar.
+That frees the haystack to split into independent slices running that many
+chains at once, enough of them to saturate the shuffle port. The parallel form
+is several times the serial one across the survey slate, and every size gets
+faster, since a document shorter than one slice re-derives its own stride
+instead of falling back to scalar.
 
 Composition gives a per-lane running max, so collapsing the slices reads the
 true maximum over the chunk — the parallel kernel refutes exactly what the
-scalar reference does. Two rejected alternatives: reading all sixteen lanes is
-sound but treats hypothetical scans as real, so nothing refutes; deleting the
-max via a self-loop measures inside the noise, for the cost of a second
-trapping form of every quotient.
+scalar reference does. `shuffle.rs` records the two alternatives that were
+measured and rejected.
 
 ### The Start-Block Skip
 
@@ -325,18 +527,13 @@ refutation into a missed match.
 
 The choice is per lane, since skipping frequently loses: a one-byte escape set
 can be an order of magnitude win, a three-way alternation a clear loss.
-`Lane::plan` prices both and takes the cheaper, matching the measured winner on
-the survey slate, priced by a coefficient minted specifically for it,
-`skip_excursion`, since the engine's own `dfa_excursion` under-predicts this
-path. Differentiated against a scalar reference three ways: every byte value
-against every set shape, a large battery of pseudo-random ASCII sets, and a
-planted escape at every offset of every short length.
+`Lane::plan` prices both and takes the cheaper, by a coefficient minted
+specifically for it — `skip_excursion`, since the engine's own `dfa_excursion`
+under-predicts this path. Every instrument is differentiated against a scalar
+reference over every byte value, every set shape, and a planted escape at every
+offset.
 
 ### The Cost Gate
-
-The filter, built first, made everything slower — a multi-fold regression across
-the early slate — because it armed on every pattern that could harvest a
-quotient.
 
 Position rejection isn't document rejection. Retiring most byte positions sounds
 decisive; one survivor still drags the whole buffer into verification — over a
@@ -346,22 +543,31 @@ falls: a date-shaped pattern can reject almost every position and still keep
 most documents, because dates cluster.
 
 The rival's price decides more often than selectivity does, so the gate is an
-inequality between two measured costs:
+inequality between two measured costs — where the cost of _not_ filtering is
+whatever the caller would really have paid, not whatever the confirm costs:
 
 ```text
-(sieve  +  (1 - (1-f)^len) * rival) * (1 + MARGIN)   <   rival
+alternative = min(rivals * rival, bypass)
+(sieve  +  (1 - (1-f)^len) * alternative) * (1 + MARGIN)   <   alternative
 ```
 
-Every term is absolute ns/byte, and the rival's term is read from
-`Dfa::accelerator` on the engine's own start state — the crate asks what
-it intends to skip, and prices that.
+Every term is absolute ns/byte, and both prices are read from `Dfa::accelerator`
+on the engine's own start state — the crate asks what it intends to skip, and
+prices that. The `min` is the part worth staring at: a caller who can settle the
+question with an engine will, so an expensive `Rival` in front of a live
+`Bypass::Engines` is inert by construction and cannot argue a sieve into
+existence. `Bypass::Absent` is how a caller states that no such shortcut exists
+where the sieve runs, and it is the only thing that makes a costly confirm
+load-bearing.
+
+Whatever the prices, `1 / survival` bounds the whole thing, so `CostFact::ceiling`
+is the most any of them could ever have reached. `NotWorthIt` prints it, which
+turns "this declined" into "this declined and here is whether that is arguable."
 
 `MARGIN` sits well above unity so a modeled edge inside the mint's run-to-run
-spread declines. Every term is a measurement, and a verdict inside that spread
-is a coincidence rather than a finding: patterns that first scored a hair over
-parity have measured both as losses and as wins depending on residency — a coin
-flip, which is what a near-parity prediction drawn from noisy inputs should
-look like.
+spread declines, because a verdict drawn from noisy inputs at near-parity is a
+coin flip rather than a finding. `price` states the inequality's terms and names
+the test that holds the whole thing scale-invariant.
 
 ### The Persistence-Aware Prior
 
@@ -380,14 +586,10 @@ a small class alphabet, collapsing exactly to the naive chain under a
 memoryless prior. `Prior::Text` stays as that superseded case on purpose, so its
 error stays measurable.
 
-That chain was also the entire build cost: hundreds of power iterations over
-the joint state, almost all of a multi-tens-of-milliseconds build. It factors —
-the byte draw depends only on the previous class — so aggregating bytes into
-class edges once at construction visits only the transitions that exist, no
-approximation added. Build time then falls by two orders of magnitude across
-the survey slate. One thing didn't survive: exiting early once the distribution
-looked settled, since the accepting mass can still be climbing after the bulk
-has stopped moving — the iteration count is now fixed.
+The joint chain was also the entire build cost, and it factors — the byte draw
+depends only on the previous class — so aggregating bytes into class edges once
+at construction drops build time by two orders of magnitude across the survey
+slate with no approximation added.
 
 ### The Excursion Coefficient
 
@@ -402,11 +604,6 @@ the inverted values disagreed by about tenfold; read from a per-byte table,
 they collapse into a narrow band stable across re-mints — evidence the
 coefficient is real. The survey slate now classifies cleanly: every declined
 row independently measures below unity when forced to arm.
-
-The armed-row geomean can mislead: turning the skip kernel off
-(`SHENG_NO_SKIP=1`) can raise the average, because the skip arms marginal
-patterns that pull it down. Held to the patterns that arm either way, the skip
-still wins — nearly all of the gain on the distinctive-alphabet cases.
 
 ### Machine Dependence
 
@@ -428,17 +625,14 @@ What survives scaling is three dimensionless ratios, minted from real source:
 - **Excursion** — how many walk-bytes an accelerator restart costs.
 
 They differ less than instinct suggests once both sides run the same kernel —
-walk cost is nearly identical across the shipped rows. After `shuffle` moved to
-four parallel slices, patterns that sit near the margin arm on both
-architectures together.
+walk cost is nearly identical across the shipped rows.
 
 `price::MINTED` holds one row per (os, architecture, kernel) triple measured so
-far — ten of them, covering all six native machines. The `os` column is there
-because it was earned: keyed on the pair alone, three of the six native legs ran
-on a row minted on a fourth machine and were caught arming a pattern that then
-lost against real source text — macOS x86_64 prices its own AVX2 sieve at
-0.527 ns/B where the Linux x86_64 row it was borrowing reads 0.325. Anything
-unmeasured declines, naming the missing measurement.
+far, covering all six native machines. The `os` column is there because it was
+earned: keyed on the pair alone, three of the six native legs ran on a row
+minted on a fourth machine and were caught arming a pattern that then lost
+against real source text. `MINTED`'s own documentation carries the figures.
+Anything unmeasured declines, naming the missing measurement.
 
 Four corpora are minted rather than one, because a byte prior is a claim about a
 corpus and shipping only source text priced everyone else's bytes under a model
