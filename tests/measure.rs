@@ -240,8 +240,11 @@ fn the_sample_size_decides_which_column_was_measured() {
 /// the only place the cross-regime sanity check can live.
 #[test]
 fn merging_combines_two_columns_and_refuses_two_machines() {
-    let docs = sample();
-    let docs = borrowed(&docs);
+    // Deliberately independent of SHENG_CORPUS: native CI points that at a checked-out
+    // source forest large enough to be memory-resident, while this test needs one known
+    // cache column to exercise the merge itself.
+    let sample = vec![b'q'; MEASURABLE_ABOVE * 2];
+    let docs = [sample.as_slice()];
     let hot = mine(&docs);
     assert_eq!(hot.regime(), Some(Residency::Cache));
 
