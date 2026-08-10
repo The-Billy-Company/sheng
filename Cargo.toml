@@ -94,7 +94,13 @@ std = [ "memchr/std", "regex-automata?/std" ]
 # Default because reading the real engine's automaton is the soundness argument, not a
 # convenience — but optional because nothing in it is on the scan path, so a caller
 # who builds sieves elsewhere and only runs them here pays for none of it.
-regex-automata = [ "dep:regex-automata" ]
+#
+# `regex-syntax` rides along rather than earning a feature of its own: it is what
+# `src/relax.rs` rewrites a repetition bound in, so it is meaningful only where there
+# is a pattern string to parse — the exact condition this feature already names. It
+# adds nothing to the graph either, being the crate `regex-automata`'s own `syntax`
+# leg already resolves.
+regex-automata = [ "dep:regex-automata", "dep:regex-syntax" ]
 
 [dependencies]
 # Not a dependency of the sieve, of the arithmetic, or of the kernel — only of
@@ -116,12 +122,27 @@ regex-automata = { version = "0.4.16", optional = true, default-features = false
   "dfa-build",
 ] }
 
+# The HIR a repetition bound lives in, and the only reason this is a direct dependency:
+# `src/relax.rs` rebuilds a pattern's tree with every bound dropped, which is a sound
+# over-approximation and the difference between pricing a `{16}`-shaped pattern and
+# refusing it unpriced. Not a widening of the dependency graph — `regex-automata`'s
+# `syntax` feature above already resolves exactly this crate, so the version is stated
+# to keep the two on one copy of `Hir` rather than to pull anything new in. Kept out of
+# the public API on purpose: nothing in `sheng`'s surface names an `Hir`, so this stays
+# a private dependency and its next major version is not a breaking change here.
+regex-syntax = { version = "0.8.11", optional = true, default-features = false }
+
 # Every example is an instrument pointed at a *pattern*, so each needs the leg that
 # can turn one into an automaton. Declared rather than inherited so
 # `--no-default-features` builds the library instead of failing on the examples.
 [[example]]
 name = "bench"
 path = "examples/bench.rs"
+required-features = [ "regex-automata" ]
+
+[[example]]
+name = "census"
+path = "examples/census.rs"
 required-features = [ "regex-automata" ]
 
 [[example]]

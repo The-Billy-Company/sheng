@@ -29,7 +29,7 @@ Measures everything the crate cannot derive, and prints it as Rust ready to past
   so a coefficient that cannot carry the model says so.
 
 A run measures a corpus or a machine, never both. Named, it mints that one prior and
-stops — a price row swept over prose would still be keyed on (architecture, kernel), so
+stops — a price row swept over prose would still be keyed on its machine triple, so
 pasting one would overwrite a row measured on the bytes its callers actually search:
 
 ```bash

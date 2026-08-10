@@ -66,21 +66,6 @@ const ROUNDS: usize = 5;
 /// the quantity a verdict has to clear.
 const SAMPLES: usize = 5;
 
-/// The corpus volume above which a scan is reading from memory rather than from cache.
-///
-/// Eight mebibytes is past the last-level cache of the machines `price::MINTED` names,
-/// which is the only property that matters here.
-///
-/// This constant used to be the volume below which this example **refused to judge the
-/// model at all**, and the refusal was correct at the time: a calibration was
-/// nanoseconds per byte read from memory, so a corpus that never read from memory was
-/// outside the model's domain and a loss there was not evidence against it. That is
-/// what `price::Residency` fixed. The threshold now *selects* which column of the
-/// calibration the gate reads, so a small corpus is a regime this example can price
-/// instead of one it has to decline — which is the entire difference between a model
-/// with a documented blind spot and a model with a dimension.
-const RESIDENT_ABOVE: usize = 8 << 20;
-
 fn matcher(pattern: &str) -> dense::DFA<Vec<u32>> {
     dense::Builder::new()
         .syntax(syntax::Config::new().utf8(false))
@@ -115,12 +100,18 @@ fn main() {
     // The regime is read off the corpus rather than configured, because here it is a
     // measurable fact: this example knows exactly how many bytes it is about to hand the
     // engine and how many times. A library caller has to declare it because the library
-    // does not get to see the corpus.
-    let residency = if bytes > RESIDENT_ABOVE {
-        Residency::Memory
-    } else {
-        Residency::Cache
-    };
+    // does not get to see the corpus — but the arithmetic from a byte count to a regime
+    // is the library's, so this is `Residency::of_working_set` rather than this example's
+    // own copy of `price::RESIDENT_ABOVE`, which is what it used to be.
+    //
+    // That threshold used to be the volume below which this example refused to judge the
+    // model **at all**, and the refusal was correct at the time: a calibration was
+    // nanoseconds per byte read from memory, so a corpus that never read from memory was
+    // outside the model's domain and a loss there was not evidence against it. That is
+    // what `Residency` fixed. It now selects which column of the calibration the gate
+    // reads, which is the whole difference between a model with a documented blind spot
+    // and a model with a dimension.
+    let residency = Residency::of_working_set(bytes);
     println!(
         "{} documents · {:.1} MiB · {residency:?}-resident · {SAMPLES} samples of min-of-{ROUNDS}\n",
         docs.len(),

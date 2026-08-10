@@ -8,17 +8,20 @@
 //!
 //! * **kernel** — nanoseconds per byte for [`sheng::Sieve::refutes`] over real source,
 //!   which is the `sieve` coefficient `mint` writes into a [`sheng::price::Calibration`].
-//!   Reported per document size, because the vector path needs a superblock to fill
-//!   and a 256-byte document is a different measurement from a 64 KiB one.
 //! * **build** — microseconds for [`sheng::Sieve::new`], which a caller compiling one
 //!   sieve per literal (regulator does) pays once per literal and notices immediately.
+//! * **length** — both the kernel and the engine it fronts, swept over record sizes, so
+//!   the table reports the sieve's *edge* rather than only its price. That is the
+//!   quantity [`sheng::price::VALIDITY_FLOOR`] bounds, and it cannot be read off either
+//!   loop alone — see [`sizes`].
 //!
 //! Ungated throughout: a gated build on a pattern the economics decline would time
 //! nothing at all.
 
 use std::time::Instant;
 
-use regex_automata::dfa::dense;
+use regex_automata::Input;
+use regex_automata::dfa::{Automaton, dense};
 use regex_automata::nfa::thompson;
 use regex_automata::util::syntax;
 
@@ -116,27 +119,98 @@ fn phases(pattern: &str) -> (f64, f64, f64) {
     (project, harvest, select)
 }
 
-/// The same kernel against synthetic document lengths cut from real bytes.
+/// Both loops against synthetic document lengths cut from real bytes — which is the
+/// measurement [`sheng::price::VALIDITY_FLOOR`] is a claim about.
 ///
-/// A refutation filter is judged at whole-document grain, and the vector path needs
-/// a superblock to fill before it beats the scalar walk — so a table that only ever
-/// reported one length would hide exactly the crossover a caller with small files
-/// lands on.
+/// The sieve's own curve alone cannot settle where a verdict stops travelling, and
+/// that is worth being exact about, because this table used to report only that curve.
+/// The gate compares a *ratio*, and both of its legs move as records shorten — in
+/// opposite directions. The sieve pays a per-call cost the model does not carry, so it
+/// gets dearer per byte. The rival gets *cheaper* per byte, because consecutive searches
+/// over short records are independent dependency chains that a wide core overlaps and a
+/// single long walk cannot. Both errors push the same way: they flatter the sieve.
+///
+/// So what is printed is the edge, and the edge relative to the length every coefficient
+/// was minted at. That last column is the model's error at each length, and where it
+/// crosses [`sheng::price::MARGIN`] is where the floor belongs.
 fn sizes(docs: &[Vec<u8>]) {
     let Ok(sieve) = Sieve::ungated(r"(?-u)[A-Z][a-z]+Service") else {
         return;
     };
+    // Never present in source text, so both legs time a full traversal rather than an
+    // early exit. The first has a 52-byte class ahead of the sentinel, far over the
+    // engine's accelerator threshold, so it walks; the second leads with the rare byte
+    // and streams. Together they are the two rivals the gate ever prices against.
+    let mut walk = searcher(r"(?-u)[A-Za-z]\x00\x01zz");
+    let mut skip = searcher(r"(?-u)\x00\x01zz");
+
     let flat: Vec<u8> = docs.iter().flatten().copied().take(8 << 20).collect();
-    println!("\n{:>10} {:>12}", "doc bytes", "ns/B");
-    for len in [64usize, 256, 1024, 4096, 65536] {
+    let mut at = |len: usize| {
         let cut: Vec<&[u8]> = flat.chunks_exact(len).collect();
-        let total = cut.len() * len;
-        let secs = fastest(ROUNDS, || {
-            for hay in &cut {
-                std::hint::black_box(sieve.refutes(hay));
+        let total = (cut.len() * len) as f64;
+        let mut best = [f64::MAX; 3];
+        // Interleaved: a ratio is a measurement only when both legs saw one machine.
+        for _ in 0..ROUNDS {
+            for (slot, run) in [
+                &mut (|hay: &[u8]| {
+                    std::hint::black_box(sieve.refutes(hay));
+                }) as &mut dyn FnMut(&[u8]),
+                &mut walk,
+                &mut skip,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let t = Instant::now();
+                for hay in &cut {
+                    run(hay);
+                }
+                best[slot] = best[slot].min(t.elapsed().as_secs_f64());
             }
-        });
-        println!("{len:>10} {:>12.4}", secs * 1e9 / total as f64);
+        }
+        best.map(|secs| secs * 1e9 / total)
+    };
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let nominal = sheng::price::NOMINAL_LEN as usize;
+    let [base_sieve, base_walk, _] = at(nominal);
+    let minted = base_walk / base_sieve;
+
+    println!(
+        "\n{:>10} {:>10} {:>10} {:>10} {:>8} {:>9}",
+        "doc bytes", "sieve ns/B", "walk ns/B", "skip ns/B", "edge", "vs minted"
+    );
+    for len in [64usize, 128, 256, 512, 1024, 2048, 4096, 16384, 65536] {
+        let [ns, walk, skip] = at(len);
+        let edge = walk / ns;
+        let floor = len as f64 == sheng::price::VALIDITY_FLOOR;
+        println!(
+            "{len:>10} {ns:>10.4} {walk:>10.4} {skip:>10.4} {edge:>8.2} {:>8.1}%{}",
+            (edge / minted - 1.0) * 100.0,
+            if floor { "  <- VALIDITY_FLOOR" } else { "" }
+        );
+    }
+    // The nominal row is a *second* measurement of the same baseline, so whatever it
+    // reports is this sweep's own repeatability — and every other row has to be read
+    // against that rather than against zero.
+    println!(
+        "  the model prices this sieve length-free, at the {minted:.2}x it measures over \
+         {nominal}-byte records;\n  a row further from that than {:.0}% is a verdict MARGIN no \
+         longer covers, and the {nominal} row\n  is a re-measurement of the baseline, so its \
+         own deviation is this sweep's noise.",
+        sheng::price::MARGIN * 100.0
+    );
+}
+
+/// A search loop over one pattern, for use as a timing leg.
+fn searcher(pattern: &str) -> impl FnMut(&[u8]) {
+    let dfa = dense::Builder::new()
+        .syntax(syntax::Config::new().utf8(false))
+        .thompson(thompson::Config::new().utf8(false))
+        .build(pattern)
+        .expect("the reference pattern builds");
+    move |hay: &[u8]| {
+        std::hint::black_box(dfa.try_search_fwd(&Input::new(hay)).expect("no quit bytes"));
     }
 }
 

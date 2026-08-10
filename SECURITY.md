@@ -25,7 +25,8 @@ Please include:
   have been (a script that builds them beats a tarball);
 - the output of `sheng::shuffle::kernel()`, which names the vector path that
   actually ran, and your OS and architecture;
-- the `Policy` in force if it was not `Policy::default()`;
+- the `Policy` in force if it was not `Policy::new(residency)`, and the
+  `Residency` you named;
 - the crate version and how you built it.
 
 We will acknowledge within **72 hours** and give you a triage verdict with a

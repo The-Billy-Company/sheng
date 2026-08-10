@@ -4,8 +4,9 @@
 that no downstream check would ever catch, so the suite here is built around it rather
 than around coverage.
 
-Two files. `soundness.rs` asks whether a sieve ever lies about a document; `policy.rs`
-asks whether the decision to use one is secretly a claim about a single laptop.
+`soundness.rs` asks whether a sieve ever lies about a document; `policy.rs` asks whether
+the decision to use one is secretly a claim about a single laptop; `rival.rs` asks what
+the decision is even a decision *about*.
 
 `soundness.rs` holds four properties:
 
@@ -41,6 +42,24 @@ six pin the economics as a **replaceable policy** rather than a global fact.
 | `the_prior_reaches_the_decision`                         | chains that decorate the API without reaching the model, or a sweep that is not monotone |
 | `longer_documents_are_harder_to_justify`                 | the nominal length dropping out of the amortization                                      |
 | `every_shipped_row_names_a_real_machine`                 | a coefficient with no provenance, or a scalar row pricing vector economics               |
+
+## What `rival.rs` is for
+
+`policy.rs` pins the economics against one rival: `regex-automata`. But an economic
+decline is a verdict against *a particular* rival, and that one is among the fastest byte
+scanners in existence — so "this filter is not good enough" and "this filter is competing
+with something very hard to beat" are different findings the gate reports identically.
+`Policy::rival` is the seam that separates them, and these three keep it honest in both
+directions.
+
+| test                                                        | what it would catch                                                                          |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `a_costly_confirm_arms_a_sieve_the_engine_declined`         | a stated rival price that is accepted and then ignored, or a gate not monotone in it         |
+| `no_rival_price_rescues_a_filter_that_retires_nothing`      | an expensive rival overriding the gate rather than pricing it — arming a filter with no selectivity |
+| `a_nonsense_rival_price_declines_rather_than_arming_or_panicking` | a price that is not a price reaching the comparison; a negative one **inverts** the inequality and arms |
+
+The second is what makes the first safe to offer, and the third is why `CostFact::pays`
+guards its comparison rather than taking it bare.
 
 The end-to-end economic check is not here — it needs a large corpus and several
 seconds, so it lives in `examples/survey.rs`, which asserts.

@@ -150,13 +150,11 @@ pub const ARCH: &str = if cfg!(target_arch = "aarch64") {
 /// nothing in `cfg` distinguishes them — but in practice the fleet lands one per
 /// operating system, so this column separates them.
 ///
-/// It was added because a measurement demanded it, not to be thorough. With rows keyed
-/// on (architecture, kernel) alone, `.github/workflows/native.yml`'s six legs put three
-/// machines on a row minted on a fourth, and `examples/survey.rs` caught all three
-/// arming a pattern that then lost against real source text — `macos` x86_64 measured
-/// its own sieve at 0.54 ns/B where the Linux row it was borrowing claimed 0.22. That
-/// is the evidence [`crate::price::MINTED`] said would be required before this column
-/// existed, and the three legs that passed had merely been lucky in their silicon.
+/// It was added because a measurement demanded it, not to be thorough: keyed on
+/// (architecture, kernel) alone, three of `.github/workflows/native.yml`'s six legs ran on
+/// a row minted on a fourth machine and `examples/survey.rs` caught each of them arming a
+/// pattern that then lost against real source text. [`crate::price::MINTED`] carries that
+/// evidence and the figures behind it.
 ///
 /// # Only what this repository builds is enumerated
 ///
@@ -264,13 +262,11 @@ impl Kernel {
 /// in [`Kernel::Scalar`], which every target can run.
 ///
 /// Widest, not fastest, and the distinction is load-bearing. This order is a *prior* —
-/// register width is a guess about throughput, and on x86_64 it is a guess that has now
-/// been measured wrong: a 4-core Linux runner timed the AVX-512 composition kernel at
-/// 0.335 ns/B against AVX2's 0.290, because a `zmm` shuffle can hold the core at a
-/// lower frequency for the rest of the document and no per-byte instruction count can
-/// see that. So [`kernel`] ranks the priced rungs by what
-/// [`crate::price::MINTED`] measured and consults this order only to break a tie and to
-/// answer at all on a machine nothing has priced.
+/// register width is a guess about throughput, and on x86_64 it is a guess the mint has
+/// measured wrong more than once, for reasons no per-byte instruction count can see
+/// (`avx512.rs`'s `quad` holds one such measurement and its cause). So [`kernel`]
+/// ranks the priced rungs by what [`crate::price::MINTED`] measured and consults this
+/// order only to break a tie and to answer at all on a machine nothing has priced.
 ///
 /// Public because it is what `examples/mint.rs` iterates: one mint run on a machine
 /// should price every kernel that machine has, not only the one it would have
