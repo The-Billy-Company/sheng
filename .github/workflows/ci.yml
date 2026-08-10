@@ -336,7 +336,7 @@ jobs:
       # its `action.yml` declares the input required and spells the default with a
       # non-standard `defaultValue:` key that GitHub never injects, so an omitted input
       # surfaces as `Please, provide value for option "sdeVersion"`.
-      - uses: petarpetrovt/setup-sde@31aa4a8e85e109bef00f1d838613fcc6ec421271 # v5.0
+      - uses: petarpetrovt/setup-sde@6d2773bc0ef3005fd52e0ae0bb91782321793aec # v6.0
         with:
           environmentVariableName: SDE_PATH
           sdeVersion: 10.8.0
