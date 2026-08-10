@@ -31,8 +31,8 @@ pub enum BuildError {
     ///
     /// It is the only variant in this enum that a *machine* causes rather than a pattern,
     /// and therefore the only one with a general remedy: measure the machine.
-    /// [`Calibration::measure`](price::Calibration::measure) takes a row over the
-    /// caller's own documents in a few seconds and
+    /// `Calibration::measure` takes a row over the caller's own documents in a few
+    /// seconds and
     /// [`Policy::calibration`](crate::Policy::calibration) is where it goes, after which
     /// this variant is unreachable and the gate decides on arithmetic about the machine
     /// that is actually running. `cargo run --release --example mint` is the same
@@ -41,7 +41,7 @@ pub enum BuildError {
     ///
     /// A caller who would rather not spend the seconds can accept that this machine runs
     /// unfiltered, which is what happens if this error is ignored — see
-    /// [`Screen`](crate::Screen), which ignores it for them.
+    /// `Screen`, which ignores it for them.
     ///
     /// All three parts are reported because any two of them are not enough to find the
     /// gap. `MINTED` can hold a row for this architecture *and* this kernel and still not

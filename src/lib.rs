@@ -530,7 +530,7 @@ impl Sieve {
     /// small enough to sieve at all. A bounded repeat spends a DFA state per count, so
     /// `AKIA[0-9A-Z]{16}` puts the reachable core past [`MAX_CORE_STATES`] while
     /// `AKIA[0-9A-Z]+` — whose language strictly contains it — is a handful of states
-    /// and a sharper quotient. [`Sieve::with`] performs exactly that exchange for
+    /// and a sharper quotient. `Sieve::with` performs exactly that exchange for
     /// pattern strings; this is the same seam for a caller who builds automata
     /// themselves, including on `no_std` where there is no parser to relax.
     ///
