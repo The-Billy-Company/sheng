@@ -46,7 +46,7 @@ jobs:
     name: preflight
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - id: version
@@ -78,7 +78,7 @@ jobs:
     needs: preflight
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Nothing here pushes with the checkout credential, and leaving it in
           # .git/config is how it ends up inside an uploaded artifact.
@@ -126,7 +126,7 @@ jobs:
       # The OIDC token Trusted Publishing exchanges for a short-lived registry token.
       id-token: write # crates.io exchanges this OIDC identity for the publish token
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Nothing here pushes with the checkout credential, and leaving it in
           # .git/config is how it ends up inside an uploaded artifact.
