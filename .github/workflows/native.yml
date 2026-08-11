@@ -67,7 +67,7 @@ jobs:
             label: windows-aarch64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Nothing here pushes with the checkout credential, and leaving it in
           # .git/config is how it ends up inside an uploaded artifact.
@@ -84,25 +84,25 @@ jobs:
       # they are ~14 MiB of real source after `examples/common.rs`'s own
       # extension and directory filters — comfortably past the floor without
       # cloning anything sheng does not already cite in its own README.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: The-Billy-Company/irregex
           ref: f24276fb72baf13f50e867d26d052bdcfa8579e3
           persist-credentials: false
           path: corpus/irregex
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: The-Billy-Company/gist
           ref: 3a56b5d62c561175f93693b0de4a471b358f1dc8
           persist-credentials: false
           path: corpus/gist
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: The-Billy-Company/relate
           ref: 4c61e3c8c902beeb2db027e1ef51787ac7e49c5c
           persist-credentials: false
           path: corpus/relate
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: The-Billy-Company/blast
           ref: ab6951c4e733701b00821037f4336183dccf2cf3
@@ -113,7 +113,7 @@ jobs:
         with:
           toolchain: stable
       - if: inputs.cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       # Release, not dev: the SIMD kernels are the whole point of the crate and
       # the soundness/kernel-agreement suites are the tests that matter here, so

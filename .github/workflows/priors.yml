@@ -53,14 +53,14 @@ jobs:
     name: re-mint from pinned corpora
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       # Machine-generated JSON: the corpus simdjson benchmarks its own parsers against,
       # so it spans pretty-printed meshes, minified API dumps, GeoJSON and Twitter
       # payloads rather than one shape of object.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: simdjson/simdjson-data
           ref: 4197c425e857f0ec38e89822fdd0bd9ea21f4daf
@@ -71,7 +71,7 @@ jobs:
       # HDFS, HealthApp, HPC, Linux, Mac, OpenSSH, OpenStack, Proxifier, Spark,
       # Thunderbird, Windows, Zookeeper. Sixteen real formatters is the only way a log
       # prior is about logs rather than about one team's logger.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: logpai/loghub
           ref: dd61d0952749ee7963bde24220d1be5ede023033
