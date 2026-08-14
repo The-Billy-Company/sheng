@@ -59,9 +59,13 @@ jobs:
       # the release path entirely rather than granting it rights it cannot use.
       contents: read
     outputs:
-      # The JSON object of the currently open release PR — set only while one
-      # is unmerged. The fold-changelog job below is what actually reads it.
-      pr: ${{ steps.release.outputs.pr }}
+      # The branch of the open release PR, whether or not THIS run touched it.
+      # The action's own `pr` output is set only when it wrote something, so a
+      # push that leaves an existing PR alone — a `ci:` commit, or a new
+      # changelog fragment, neither of which changes the version — reported no
+      # PR at all and skipped the fold. The PR then sits open with fragments
+      # unfolded, and nothing says so until preflight refuses to publish it.
+      head: ${{ steps.target.outputs.head }}
     steps:
       # Exchange the App's signing key for an installation token scoped to this
       # repo, valid one hour. Fails loudly if the App is not installed here.
@@ -89,14 +93,47 @@ jobs:
           target-branch: main
           token: ${{ steps.app-token.outputs.token }}
 
+      # Asked of the repository's state rather than of what this run happened to
+      # do. `autorelease: pending` is release-please's own marker for the PR it is
+      # holding open — the same label its next run reads to decide whether a
+      # release is outstanding — so this is its bookkeeping, not a branch name
+      # guessed from a naming convention.
+      - id: target
+        name: Which branch the open release PR is on
+        env:
+          PR: ${{ steps.release.outputs.pr }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          head=$(python3 -c 'import json, os; print(json.loads(os.environ["PR"] or "{}").get("headBranchName", ""))')
+          if [ -z "$head" ]; then
+            head=$(gh pr list --repo "$REPO" --state open --label 'autorelease: pending' \
+                     --json headRefName --jq '.[0].headRefName // ""')
+          fi
+          echo "head=${head}" >> "$GITHUB_OUTPUT"
+          echo "release PR branch: ${head:-<none open>}"
+
   # Folds changelog.d/ into CHANGELOG.md on the release PR's own branch, at the
   # exact version release-please just bumped `Cargo.toml` to on that branch —
   # read back through the shared `version` command rather than re-parsed here,
   # so this job agrees with the preflight by construction instead of by two
-  # authors keeping two regexes in sync.
+  # authors keeping two regexes in sync. It runs for as long as the PR is open,
+  # not only on the push that created it: a fragment can land days later, and
+  # folding it then is the whole point of the job.
   fold-changelog:
     name: fold changelog
     needs: release-please
+    if: needs.release-please.outputs.head != ''
+    # Keyed on the branch this job writes, not on the ref that triggered it. The
+    # workflow group above already serializes runs for one ref, but a
+    # `workflow_dispatch` from another ref is outside it and would still find this
+    # same open PR — two runs pushing one branch, where the loser is a red X on
+    # work the winner already did. Cancelled rather than queued: the survivor
+    # reads the branch as it is now.
+    concurrency:
+      group: fold-changelog-${{ needs.release-please.outputs.head }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -108,33 +145,8 @@ jobs:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
-          # Read-only, and only so the step below can find the open release PR when
-          # release-please did not report one.
-          permission-pull-requests: read
 
-      # Which branch to fold onto. release-please reports `pr` only from the run that
-      # creates or updates it, so a later push carrying nothing release-please acts on
-      # leaves that output empty while the PR is open and still unfolded — which is how
-      # a PR came to sit red on a lock this job exists to move. Fall back to asking for
-      # the open PR release-please labels `autorelease: pending`.
-      - id: pr
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          REPORTED: ${{ needs.release-please.outputs.pr }}
-        run: |
-          set -euo pipefail
-          if [ -n "$REPORTED" ]; then
-            branch=$(python3 -c 'import json,os; print(json.loads(os.environ["REPORTED"])["headBranchName"])')
-          else
-            branch=$(gh pr list --state open --base main --label 'autorelease: pending' \
-              --json headRefName --jq '.[0].headRefName // ""')
-          fi
-          printf 'branch=%s\n' "$branch" >>"$GITHUB_OUTPUT"
-          [ -n "$branch" ] || echo 'no open release PR: nothing to fold onto'
-
-      - if: steps.pr.outputs.branch != ''
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The App token is used only by the explicit git push below, which carries it
           # in a one-off remote URL. Do not leave it behind in `.git/config` for a later
@@ -142,32 +154,30 @@ jobs:
           # with credentials unpersisted the input authenticates nothing, and reading it
           # as if it did is what left this job committing a fold it could not push.
           persist-credentials: false
-          ref: ${{ steps.pr.outputs.branch }}
+          ref: ${{ needs.release-please.outputs.head }}
 
-      - if: steps.pr.outputs.branch != ''
-        id: version
-        uses: The-Billy-Company/.github/actions/package-release@deb135f046122a10cabc861e96eb9941c2d09ddc # main
+      - id: version
+        uses: The-Billy-Company/.github/actions/package-release@18530e6f8b7ad634dcfe52e423e2a0a8e7bd521e # main
         with:
           command: version
           args: --root .
 
-      - if: steps.pr.outputs.branch != ''
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           enable-cache: false
 
       - name: Fold changelog.d fragments into CHANGELOG.md at this PR's version
-        if: steps.pr.outputs.branch != ''
         env:
           # Read through the environment rather than interpolated into the script: the
           # token so it is never a substring of a command line, the branch because it is
           # PR-supplied text and this is a shell.
           RELEASE_TOKEN: ${{ steps.app-token.outputs.token }}
-          HEAD_BRANCH: ${{ steps.pr.outputs.branch }}
+          HEAD_BRANCH: ${{ needs.release-please.outputs.head }}
+          STEPS_VERSION_OUTPUTS_RESULT: ${{ steps.version.outputs.result }}
         run: |
           set -euo pipefail
           version=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])' \
-            <<<'${{ steps.version.outputs.result }}')
+            <<<"${STEPS_VERSION_OUTPUTS_RESULT}")
           # Recompute the fold from main rather than appending to whatever this branch
           # already carries. towncrier refuses outright to write a second section for a
           # version it has already written, so an incremental fold is not merely wasteful
@@ -181,6 +191,15 @@ jobs:
           git checkout FETCH_HEAD -- CHANGELOG.md changelog.d
           uv run --no-project --python 3.12 --with towncrier==25.8.0 \
             towncrier build --yes --version "$version"
+          # towncrier closes the new section with a blank line, and the blank line
+          # this file keeps under the marker rides down with the heading it used to
+          # precede — so the seam against the previous release lands with two of
+          # them, which MD012 rejects and `.githooks/pre-push` refuses on the next
+          # local push that touches CHANGELOG.md. Squeeze that one pair rather than
+          # vendoring a fork of towncrier's template: the rendering stays
+          # upstream's, and the rest of the file, fenced blocks included, is
+          # untouched.
+          python3 -c 'import pathlib, re; p = pathlib.Path("CHANGELOG.md"); p.write_text(re.sub(r"\n{3}(?=## \[)", "\n\n", p.read_text(), count=1))'
           # `Cargo.lock` carries this crate's own version too, and release-please's
           # generic updater only rewrites the marked line in `Cargo.toml`. Until the
           # lock agrees, every `--locked` job on this PR fails before it compiles a
