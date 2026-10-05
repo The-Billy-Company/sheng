@@ -28,7 +28,7 @@ jobs:
           # Nothing here pushes with the checkout credential, and leaving it in
           # .git/config is how it ends up inside an uploaded artifact.
           persist-credentials: false
-      - uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: zizmor
       # Audit at the widest persona so nothing is hidden, but block on severity rather
