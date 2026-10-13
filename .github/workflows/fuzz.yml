@@ -80,7 +80,7 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: cargo fuzz run "$TARGET" -- -max_total_time=90
       - if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-crash-${{ matrix.target }}
           path: fuzz/artifacts/${{ matrix.target }}/
@@ -181,7 +181,7 @@ jobs:
       # input to the next campaign and is named so the download step above can find it;
       # the crash is for a human, today.
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-corpus-${{ matrix.target }}
           path: fuzz/corpus/${{ matrix.target }}/
@@ -190,7 +190,7 @@ jobs:
           retention-days: 90
           if-no-files-found: ignore
       - if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-crash-campaign-${{ matrix.target }}
           path: fuzz/artifacts/${{ matrix.target }}/
