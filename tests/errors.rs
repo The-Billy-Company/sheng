@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! Property tests over the crate's error surface.
 //!
 //! `tests/soundness.rs` fuzzes the HAYSTACK against a fixed, always-valid pattern

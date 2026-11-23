@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! Probe: is there a byte-skip hiding in the quotient's start block?
 //!
 //! The kernel is load-port bound at two loads per byte, so the only remaining

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! Nothing but measured byte models, one pair of constants per corpus.
 //!
 //! Same split as [`price::minted`](crate::price): [`super`] holds the model — what a

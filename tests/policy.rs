@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! What the crate does on a machine and a corpus it has never seen.
 //!
 //! The soundness suite proves a sieve never lies about a document. This one proves the

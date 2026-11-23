@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! The `Calibration` shape and the per-byte arithmetic it answers — resolving the
 //! running machine's row is [`active`]; the rows themselves live in
 //! [`super::minted`].

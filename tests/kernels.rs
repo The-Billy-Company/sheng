@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! Every kernel this silicon can run, held to the scalar reference — not just the one
 //! dispatch elected.
 //!

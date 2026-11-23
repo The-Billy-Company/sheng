@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! What each kernel costs, and the one inequality that decides whether a sieve
 //! arms.
 //!

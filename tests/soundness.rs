@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! The only property that matters: **matched implies not refuted.**
 //!
 //! A sieve is allowed to pass a document that does not match — that costs a

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! The skip classifier, held to the transition table it claims to summarize.
 //!
 //! This is the stage `src/README.md` singles out: the one place where being fast and

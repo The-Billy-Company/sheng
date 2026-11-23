@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! The SP-partition lattice harvest: where an over-approximating automaton comes
 //! from, and why rejecting on it is sound.
 //!

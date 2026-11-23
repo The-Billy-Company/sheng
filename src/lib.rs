@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! **sheng** — register-resident refutation sieves for regex.
 //!
 //! A sieve answers one question, in one direction: *can this document be proven

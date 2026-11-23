@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! Finding the next byte that matters, without looking at the ones that do not.
 //!
 //! [`crate::shuffle`] is bound by its **load ports**, not by its instruction count:

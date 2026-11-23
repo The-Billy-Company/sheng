@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! What a byte is likely to be, given the byte before it.
 //!
 //! The selectivity gate needs to predict how often a quotient accepts without

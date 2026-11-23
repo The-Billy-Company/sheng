@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! Mint the calibration constants. Paste the output into `src/prior/minted.rs` and
 //! `src/price/minted.rs`; the row it prints carries its own machine and date.
 //!

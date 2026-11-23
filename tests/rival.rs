@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! What a survivor costs, and what the caller would have done instead — the two terms
 //! that decide the gate's right-hand side, held to the relationship between them.
 //!

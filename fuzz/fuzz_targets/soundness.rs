@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! The same property `tests/soundness.rs` proves over a fixed sweep, handed instead
 //! to a coverage-guided fuzzer so byte shapes nobody thought to hand-write get a
 //! chance to break it. Patterns are drawn from the crate's own always-valid slate

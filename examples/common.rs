@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! What both examples need from the outside world: real bytes to measure, and an
 //! honest label for the machine that measured them.
 //!

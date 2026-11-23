@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! How often a quotient accepts, decided before the scan starts.
 //!
 //! A filter that rejects nothing is not neutral — it is pure addition on every

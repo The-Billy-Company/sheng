@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! NEON kernels: baseline on every `aarch64` target, so neither of these needs a
 //! runtime probe — the caller's `cfg(target_arch = "aarch64")` is the whole
 //! precondition.

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! The counter-relaxed candidate, held to the two things it claims.
 //!
 //! Relaxation exists because a bounded repeat costs a DFA state per count, so a whole

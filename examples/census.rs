@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! Where is the audience lost? A four-way census over a population of patterns
 //! people really grep for, separating the declines the gate *decided* from the ones
 //! it never got to see.

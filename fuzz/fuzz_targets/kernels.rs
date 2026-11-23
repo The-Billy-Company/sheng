@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! Every kernel the silicon has against the scalar reference, on the same quotient and
 //! the same bytes.
 //!

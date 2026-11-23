@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! Self-pricing: a machine measures its **own** calibration row, over the caller's own
 //! bytes, instead of waiting for someone to ship one for it.
 //!

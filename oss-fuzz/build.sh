@@ -1,4 +1,5 @@
 #!/bin/bash -eu
+# Copyright (c) 2026 The Billy Company
 # Build every `fuzz/fuzz_targets/*.rs` for OSS-Fuzz.
 #
 # Runs inside the `base-builder-rust` image with `$OUT`, `$SRC` and the sanitizer flags

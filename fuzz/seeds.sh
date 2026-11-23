@@ -1,4 +1,5 @@
 #!/bin/bash -eu
+# Copyright (c) 2026 The Billy Company
 # Top up each target's corpus with seeds cut from this repository's own source text.
 #
 # `corpus/` is machine-local and gitignored, so a fresh clone — a CI runner, an OSS-Fuzz

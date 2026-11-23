@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! AVX-512 kernels: probed at runtime by [`super::kernel`] — and, like
 //! [`super::avx2`] and unlike [`super::ssse3`], probed against the *operating system*
 //! as well as the silicon — before either of these is ever called.

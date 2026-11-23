@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! The projection: what a sieve is allowed to reason about, read off a real DFA.
 //!
 //! A sieve never parses a pattern. It walks a finished automaton through the six

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! The worth-test arithmetic itself: survival, the cost inequality, and the
 //! recorded evidence a caller can explain a decision from.
 

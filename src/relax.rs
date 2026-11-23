@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! The one transform this crate applies to a pattern before reading its automaton:
 //! drop the *upper* bound on every repetition, and pull a lower bound down to one.
 //!

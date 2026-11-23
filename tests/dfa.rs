@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! The [`Dfa`] contract, exercised by an automaton this crate did not build.
 //!
 //! Every other suite here reaches the projection through `regex-automata`, which

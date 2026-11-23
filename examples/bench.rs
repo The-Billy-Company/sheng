@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! Where the time goes, isolated: the kernel's own throughput and the build's own
 //! latency, each timed away from the end-to-end slate that `survey` publishes.
 //!

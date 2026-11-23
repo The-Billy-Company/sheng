@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! The front door that cannot decline: a matcher that uses a sieve when one pays and
 //! the engine alone when one does not.
 //!

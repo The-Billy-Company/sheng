@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! The measured evidence: one [`Calibration`] row per (operating system, architecture,
 //! kernel) triple anybody has actually timed, plus the fail-safe row for everyone else.
 //!

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! One sieve in front of a **slate**, and the two walls that decide how much that is
 //! ever worth.
 //!

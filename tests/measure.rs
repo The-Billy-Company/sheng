@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! Self-pricing, held to the claim that motivates it: **a machine nobody has minted a
 //! row for can price itself and stop being inert.**
 //!

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! The register-resident kernel: one shuffle per byte, no gather, no branch.
 //!
 //! A quotient has at most 16 blocks, so one transition row is 16 bytes — exactly

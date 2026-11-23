@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! Which byte-shuffle instruction set this binary is allowed to use, decided once
 //! from `cfg`, a runtime probe, and what [`crate::price`] has actually measured — so
 //! [`crate::shuffle`]'s composition kernel and [`crate::skip`]'s nibble classifier can

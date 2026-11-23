@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! Why a pattern got no sieve.
 
 use alloc::string::String;

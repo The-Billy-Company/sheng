@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! The front door, held to one promise: **a screen answers exactly what the engine
 //! answers.**
 //!

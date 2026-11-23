@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! What a sieve needs from an automaton, and nothing more.
 //!
 //! A sieve never parses a pattern — it reads a finished DFA, so a pattern means

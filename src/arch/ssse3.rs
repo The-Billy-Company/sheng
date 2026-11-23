@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! SSSE3 kernels: probed at runtime by [`super::kernel`] before either of these is
 //! ever called.
 

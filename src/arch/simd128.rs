@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! WebAssembly SIMD128 kernels: like [`super::neon`] and unlike the x86_64 pair, these
 //! need no runtime probe — the caller's `cfg(target_feature = "simd128")` is the whole
 //! precondition, because that is the only form the question takes here.

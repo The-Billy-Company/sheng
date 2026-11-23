@@ -1,3 +1,4 @@
+// Copyright (c) 2026 The Billy Company
 //! What does a sieve actually buy? Runs from anywhere; `$SHENG_CORPUS` aims it at the
 //! documents you care about instead of the tree this file sits in.
 //!
